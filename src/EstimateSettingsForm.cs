@@ -16,9 +16,14 @@ namespace WirelessBattery
         private NumericUpDown _hours;
         private TextBox _stages;
         private Label _current;
-        private TextBox[] _weights;
-        private Label _weightsPreview;
+        private NumericUpDown[] _weights;
+        private Label[] _shareLabels;
+        private Label[] _hourLabels;
+        private Label _weightSummary;
         private int? _currentLevel;
+
+        /// <summary>五个固定区间，与 EstimateConfig.Weights 一一对应。</summary>
+        private static readonly string[] RangeText = new string[] { "100% → 80%", "80% → 60%", "60% → 40%", "40% → 20%", "20% → 0%" };
 
         public EstimateSettingsForm(AppSettings settings, string key, string title, Action onSaved)
         {
@@ -26,7 +31,7 @@ namespace WirelessBattery
             _key = key;
             _onSaved = onSaved;
             Text = "阶梯电量估算 · " + title;
-            ClientSize = new Size(500, 604);
+            ClientSize = new Size(540, 660);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -42,19 +47,19 @@ namespace WirelessBattery
 
             TableLayoutPanel table = new TableLayoutPanel();
             table.Dock = DockStyle.Fill;
-            table.Padding = new Padding(22, 16, 22, 10);
+            table.Padding = new Padding(22, 14, 22, 8);
             table.ColumnCount = 2;
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
             table.RowCount = 9;
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 46f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 104f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 44f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 90f));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 24f));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 176f));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
             table.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
             Controls.Add(table);
 
@@ -73,8 +78,8 @@ namespace WirelessBattery
             _hours.Increment = 1;
             _hours.Value = (decimal)Math.Max(1.0, Math.Min(2000.0, cfg.FullHours));
             _hours.Dock = DockStyle.Fill;
-            _hours.Margin = new Padding(3, 7, 3, 5);
-            _hours.ValueChanged += delegate { RefreshWeightsPreview(); };
+            _hours.Margin = new Padding(3, 6, 3, 4);
+            _hours.ValueChanged += delegate { RefreshWeights(); };
             table.Controls.Add(_hours, 1, 1);
 
             Label stageLabel = RowLabel("阶梯数值（从高到低，逗号分隔）");
@@ -86,7 +91,7 @@ namespace WirelessBattery
             _stages.Multiline = true;
             _stages.ScrollBars = ScrollBars.Vertical;
             _stages.Dock = DockStyle.Fill;
-            _stages.Margin = new Padding(3, 5, 3, 5);
+            _stages.Margin = new Padding(3, 4, 3, 4);
             _stages.Font = new Font("Consolas", 10f);
             _stages.TextChanged += delegate { RefreshCurrent(); };
             table.Controls.Add(_stages, 0, 3);
@@ -97,67 +102,136 @@ namespace WirelessBattery
             _current.Height = 24;
             _current.Dock = DockStyle.Fill;
             _current.Font = Ui.Font(8.5f, FontStyle.Regular);
-            _current.Margin = new Padding(4, 3, 4, 2);
+            _current.Margin = new Padding(4, 2, 4, 0);
             table.Controls.Add(_current, 0, 4);
             table.SetColumnSpan(_current, 2);
 
-            Label weightLabel = RowLabel("电量权重（五个固定区间，相对值，按总和归一化）");
+            Label weightLabel = RowLabel("各区间权重（相对值）");
             weightLabel.ForeColor = Ui.Text;
             table.Controls.Add(weightLabel, 0, 5);
             table.SetColumnSpan(weightLabel, 2);
 
-            FlowLayoutPanel weightRow = new FlowLayoutPanel();
-            weightRow.Dock = DockStyle.Fill;
-            weightRow.Margin = new Padding(3, 2, 3, 4);
-            weightRow.WrapContents = false;
-            weightRow.AutoScroll = false;
-            _weights = new TextBox[5];
-            List<double> startWeights = cfg.Weights;
-            string startReason;
-            if (!AppSettings.IsValidWeights(startWeights, out startReason)) startWeights = EstimateConfig.DefaultWeights();
-            for (int i = 0; i < 5; i++)
-            {
-                Label range = new Label();
-                range.Text = string.Format("{0}→{1}", AppSettings.WeightHighs[i], AppSettings.WeightLows[i]);
-                range.AutoSize = true;
-                range.Margin = new Padding(i == 0 ? 0 : 10, 8, 2, 0);
-                range.ForeColor = Ui.Muted;
-                range.Font = Ui.Font(8.5f, FontStyle.Regular);
-                weightRow.Controls.Add(range);
+            Control weightGrid = BuildWeightGrid(cfg);
+            table.Controls.Add(weightGrid, 0, 6);
+            table.SetColumnSpan(weightGrid, 2);
 
-                TextBox box = new TextBox();
-                box.Text = startWeights[i].ToString("0.###", CultureInfo.InvariantCulture);
-                box.Width = 52;
-                box.Margin = new Padding(0, 5, 0, 0);
-                box.TextAlign = HorizontalAlignment.Right;
-                box.Font = new Font("Consolas", 9.5f);
-                box.TextChanged += delegate { RefreshWeightsPreview(); };
-                _weights[i] = box;
-                weightRow.Controls.Add(box);
-            }
-            table.Controls.Add(weightRow, 0, 6);
-            table.SetColumnSpan(weightRow, 2);
-
-            _weightsPreview = new Label();
-            _weightsPreview.AutoSize = false;
-            _weightsPreview.Height = 22;
-            _weightsPreview.Dock = DockStyle.Fill;
-            _weightsPreview.Margin = new Padding(4, 2, 4, 2);
-            _weightsPreview.Font = Ui.Font(8.5f, FontStyle.Regular);
-            table.Controls.Add(_weightsPreview, 0, 7);
-            table.SetColumnSpan(_weightsPreview, 2);
+            _weightSummary = new Label();
+            _weightSummary.AutoSize = false;
+            _weightSummary.Dock = DockStyle.Fill;
+            _weightSummary.Margin = new Padding(4, 4, 4, 2);
+            _weightSummary.Font = Ui.Font(8.4f, FontStyle.Regular);
+            _weightSummary.ForeColor = Ui.Muted;
+            table.Controls.Add(_weightSummary, 0, 7);
+            table.SetColumnSpan(_weightSummary, 2);
 
             Label hint = new Label();
-            hint.Text = "规则：蓝牙上报值必须正好等于下面某个阶梯，否则设备卡片会提示“阶梯估算设置有误”。\n" +
-                "主数字按五个固定权重区间分配的时间向下一档推算，最低到下一档；小字显示蓝牙反馈值和已保持时间，上报新阶梯后重新计时。";
+            hint.Text = "规则：蓝牙上报值必须正好等于上面某个阶梯，否则设备卡片会提示“阶梯估算设置有误”。\n" +
+                "占比 = 该区间权重 ÷ 五项之和；每段时长 = 占比 × 满电使用时间，五项加起来正好等于满电时间。\n" +
+                "主数字按这些时长向下一档推算，最低到下一档；上报新阶梯后重新计时，只改权重不会重置已保持时间。";
             hint.Dock = DockStyle.Fill;
             hint.ForeColor = Ui.Muted;
             hint.Font = Ui.Font(8.2f, FontStyle.Regular);
+            hint.Margin = new Padding(4, 4, 4, 0);
             table.Controls.Add(hint, 0, 8);
             table.SetColumnSpan(hint, 2);
-            RefreshCurrent();
-            RefreshWeightsPreview();
 
+            RefreshCurrent();
+            RefreshWeights();
+
+            Controls.Add(BuildBottomBar());
+        }
+
+        /// <summary>
+        /// 权重区：表头 + 五行，每行「区间 / 权重输入 / 占比 / 预估时长」各占一格。
+        /// 原来五个输入框挤在同一行（约 540px 超出 456px 可用宽度），会互相压住看不见。
+        /// </summary>
+        private Control BuildWeightGrid(EstimateConfig cfg)
+        {
+            TableLayoutPanel grid = new TableLayoutPanel();
+            grid.Dock = DockStyle.Fill;
+            grid.Margin = new Padding(3, 0, 3, 0);
+            grid.ColumnCount = 4;
+            grid.RowCount = 6;
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 20f));
+            for (int r = 1; r <= 5; r++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30f));
+
+            grid.Controls.Add(HeaderLabel("区间"), 0, 0);
+            grid.Controls.Add(HeaderLabel("权重"), 1, 0);
+            grid.Controls.Add(HeaderLabel("占比"), 2, 0);
+            grid.Controls.Add(HeaderLabel("预估时长"), 3, 0);
+
+            List<double> startWeights = cfg.Weights;
+            string startReason;
+            if (!AppSettings.IsValidWeights(startWeights, out startReason)) startWeights = EstimateConfig.DefaultWeights();
+
+            _weights = new NumericUpDown[5];
+            _shareLabels = new Label[5];
+            _hourLabels = new Label[5];
+
+            for (int i = 0; i < 5; i++)
+            {
+                Label range = new Label();
+                range.Text = RangeText[i];
+                range.TextAlign = ContentAlignment.MiddleLeft;
+                range.Dock = DockStyle.Fill;
+                range.Margin = new Padding(2, 0, 2, 0);
+                range.ForeColor = Ui.Text;
+                range.Font = Ui.Font(9f, FontStyle.Regular);
+                grid.Controls.Add(range, 0, i + 1);
+
+                NumericUpDown box = new NumericUpDown();
+                box.Minimum = 0.01m;
+                box.Maximum = 10000m;
+                box.DecimalPlaces = 2;
+                box.Increment = 1m;
+                box.Value = (decimal)Math.Max(0.01, Math.Min(10000.0, startWeights[i]));
+                box.Dock = DockStyle.Fill;
+                box.Margin = new Padding(2, 3, 2, 3);
+                box.TextAlign = HorizontalAlignment.Right;
+                box.Font = new Font("Consolas", 9.5f);
+                box.ValueChanged += delegate { RefreshWeights(); };
+                _weights[i] = box;
+                grid.Controls.Add(box, 1, i + 1);
+
+                Label share = new Label();
+                share.TextAlign = ContentAlignment.MiddleRight;
+                share.Dock = DockStyle.Fill;
+                share.Margin = new Padding(2, 0, 6, 0);
+                share.ForeColor = Ui.Text;
+                share.Font = new Font("Consolas", 9.5f);
+                _shareLabels[i] = share;
+                grid.Controls.Add(share, 2, i + 1);
+
+                Label hours = new Label();
+                hours.TextAlign = ContentAlignment.MiddleLeft;
+                hours.Dock = DockStyle.Fill;
+                hours.Margin = new Padding(6, 0, 2, 0);
+                hours.ForeColor = Ui.Muted;
+                hours.Font = Ui.Font(8.8f, FontStyle.Regular);
+                _hourLabels[i] = hours;
+                grid.Controls.Add(hours, 3, i + 1);
+            }
+            return grid;
+        }
+
+        private static Label HeaderLabel(string text)
+        {
+            Label l = new Label();
+            l.Text = text;
+            l.TextAlign = ContentAlignment.BottomLeft;
+            l.Dock = DockStyle.Fill;
+            l.Margin = new Padding(2, 0, 2, 2);
+            l.ForeColor = Ui.Muted;
+            l.Font = Ui.Font(8.4f, FontStyle.Regular);
+            return l;
+        }
+
+        private Panel BuildBottomBar()
+        {
             Panel bottom = new Panel();
             bottom.Dock = DockStyle.Bottom;
             bottom.Height = 58;
@@ -166,6 +240,7 @@ namespace WirelessBattery
             {
                 using (Pen p = new Pen(Ui.Line)) e.Graphics.DrawLine(p, 0, 0, bottom.Width, 0);
             };
+
             RoundButton defaults = new RoundButton();
             defaults.Text = "恢复默认";
             defaults.Size = new Size(90, 34);
@@ -180,9 +255,9 @@ namespace WirelessBattery
                 _hours.Value = _key.Equals("K02BS", StringComparison.OrdinalIgnoreCase) ? 163 : 100;
                 List<double> w = EstimateConfig.DefaultWeights();
                 for (int i = 0; i < 5 && i < _weights.Length; i++)
-                    _weights[i].Text = w[i].ToString("0.###", CultureInfo.InvariantCulture);
+                    _weights[i].Value = (decimal)w[i];
                 RefreshCurrent();
-                RefreshWeightsPreview();
+                RefreshWeights();
             };
             bottom.Controls.Add(defaults);
 
@@ -213,7 +288,7 @@ namespace WirelessBattery
                 cancel.Left = bottom.Width - 196;
                 save.Left = bottom.Width - 100;
             };
-            Controls.Add(bottom);
+            return bottom;
         }
 
         private static Label RowLabel(string text)
@@ -312,54 +387,58 @@ namespace WirelessBattery
             Close();
         }
 
-        /// <summary>从五个输入框读权重；任意一项不是数字就返回 null（交给校验去报错）。</summary>
+        /// <summary>从五个数字框读权重；NumericUpDown 保证每项都是大于 0 的数字。</summary>
         private List<double> ReadWeights()
         {
             if (_weights == null) return EstimateConfig.DefaultWeights();
             List<double> list = new List<double>();
             for (int i = 0; i < _weights.Length; i++)
             {
-                string text = _weights[i].Text == null ? "" : _weights[i].Text.Trim();
-                double v;
-                bool ok = double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out v);
-                if (!ok) ok = double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out v);
-                if (!ok) return null;
-                list.Add(v);
+                list.Add((double)_weights[i].Value);
             }
             return list;
         }
 
-        private void RefreshWeightsPreview()
+        /// <summary>
+        /// 实时刷新每行「占比 / 预估时长」与底部合计。
+        /// 占比 = 该区间权重 ÷ 五项之和；时长 = 占比 × 满电小时。
+        /// </summary>
+        private void RefreshWeights()
         {
-            if (_weightsPreview == null) return;
+            if (_weights == null || _shareLabels == null || _weightSummary == null) return;
             List<double> weights = ReadWeights();
             string reason;
             if (!AppSettings.IsValidWeights(weights, out reason))
             {
-                _weightsPreview.Text = reason + "（非法权重不会保存）";
-                _weightsPreview.ForeColor = Color.FromArgb(240, 68, 56);
+                _weightSummary.Text = reason + "（非法权重不会保存）";
+                _weightSummary.ForeColor = Color.FromArgb(240, 68, 56);
                 return;
             }
+
+            double sum = 0;
+            for (int i = 0; i < weights.Count; i++) sum += weights[i];
+            double fullHours = (double)_hours.Value;
             double[] shares = AppSettings.NormalizedShares(weights);
-            double[] hours = AppSettings.IntervalHours(weights, (double)_hours.Value);
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < 5; i++)
-            {
-                if (i > 0) sb.Append(" · ");
-                sb.Append(Percent(shares[i] * 100));
-            }
-            StringBuilder hb = new StringBuilder();
+            double[] hours = AppSettings.IntervalHours(weights, fullHours);
+
+            StringBuilder sbShare = new StringBuilder();
+            StringBuilder sbHour = new StringBuilder();
             double total = 0;
             for (int i = 0; i < 5; i++)
             {
-                if (i > 0) hb.Append(" · ");
-                hb.Append(hours[i].ToString("0.#", CultureInfo.InvariantCulture) + "h");
+                _shareLabels[i].Text = Percent(shares[i] * 100);
+                _hourLabels[i].Text = hours[i].ToString("0.#", CultureInfo.InvariantCulture) + " 小时";
+                if (i > 0) { sbShare.Append(" · "); sbHour.Append(" · "); }
+                sbShare.Append(Percent(shares[i] * 100));
+                sbHour.Append(hours[i].ToString("0.#", CultureInfo.InvariantCulture));
                 total += hours[i];
             }
-            _weightsPreview.Text = "占比 " + sb.ToString()
-                + "　当前 " + _hours.Value.ToString("0.#", CultureInfo.InvariantCulture) + " 小时 → "
-                + hb.ToString() + "（合计 " + total.ToString("0.#", CultureInfo.InvariantCulture) + " 小时）";
-            _weightsPreview.ForeColor = Ui.Muted;
+
+            _weightSummary.Text =
+                "五项之和 = " + sum.ToString("0.###", CultureInfo.InvariantCulture) + "　→　占比 " + sbShare.ToString() + "\n"
+                + "满电 " + fullHours.ToString("0.#", CultureInfo.InvariantCulture) + " 小时　→　" + sbHour.ToString()
+                + " 小时（合计 " + total.ToString("0.#", CultureInfo.InvariantCulture) + " 小时）";
+            _weightSummary.ForeColor = Ui.Muted;
         }
 
         private static string Percent(double value)

@@ -1,0 +1,20 @@
+# 构建产物（由 build.ps1 生成，不入库）
+bin/*.exe
+bin/启动设备电量.cmd
+bin/打开设备电量.lnk
+build-info.txt
+*.zip
+
+# 运行时生成（含本机设备名、时间戳、电量，属个人数据）
+settings.ini
+scan.txt
+crash.txt
+*.log
+
+# 编辑器 / 系统
+.vs/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
+.workbuddy/

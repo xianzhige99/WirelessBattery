@@ -1110,10 +1110,18 @@ namespace WirelessBattery
         private DeviceCardModel ReadK02BS(HidGroup g, DeviceCardModel card, List<BtBatteryInfo> bt)
         {
             BtBatteryInfo b = FindBt(bt, "K02BS");
-            bool btConnected = b != null && (b.HasProperty || b.Level.HasValue);
+            // HFP 电量只在“已经确认连着”时用来显示数值；它本身不是连接证据
+            // （设备断开后 Windows 仍会保留旧的电量属性，实测关机状态下照样读到 80%）。
+            bool hasBtLevel = b != null && b.Level.HasValue && b.Level.Value > 0;
             AudioLinkInfo link = AudioLink.IsK02BSLinked();
-            K02BSLinkState state = K02BSLinkJudge.Decide(link.DonglePresent, link.BluetoothLinked, btConnected);
-            WriteLog("K02BS 端点: " + link.Detail + " ; BT电量=" + (btConnected ? "有" : "-")
+
+            // 蓝牙侧两路独立证据：ff=3/5 端点激活，或 bthprops 的 fConnected。
+            int api = BluetoothLink.QueryConnected("K02BS");
+            bool btLinked = link.BluetoothLinked || (api == 1);
+            K02BSLinkState state = K02BSLinkJudge.Decide(link.DonglePresent, btLinked);
+            WriteLog("K02BS 端点: " + link.Detail
+                + " ; 蓝牙API=" + (api < 0 ? "不可用" : (api == 1 ? "已连接" : "未连接"))
+                + " ; HFP电量=" + (hasBtLevel ? b.Level.Value + "%" : "-")
                 + " ; 判定=" + K02BSLinkJudge.ModeText(state));
 
             EstimateConfig cfg = Settings.GetEstimateConfig("K02BS");
@@ -1168,7 +1176,9 @@ namespace WirelessBattery
                 st.ModeCheckDone = true;
             }
 
-            if (btConnected && b.Level.HasValue && b.Level.Value > 0)
+            // 只有蓝牙链路确实通（端点激活或 fConnected）时才采用 HFP 电量；
+            // 否则那只是断开后残留的旧属性。
+            if (hasBtLevel && (state == K02BSLinkState.Dual || state == K02BSLinkState.Bluetooth))
             {
                 if (mode == "双模" && st.HoldFrozen)
                 {
@@ -1201,8 +1211,6 @@ namespace WirelessBattery
 
                 int? lastDongle = Settings.GetLastLevel("K02BS");
                 card.Mode = "2.4G";
-                card.Connected = effective;
-                card.LinkPending = pending;
                 card.HasLevel = lastDongle.HasValue;
                 if (lastDongle.HasValue) { card.Level = lastDongle; card.LevelText = lastDongle.Value + "%"; }
                 else card.LevelText = "—";
@@ -1210,6 +1218,8 @@ namespace WirelessBattery
                 if (Settings.K02BSSoleDongleAsConnected)
                 {
                     // 用户明确选择“接收器在线即算已连接”（只用 2.4G 的场景）。
+                    card.Connected = effective;
+                    card.LinkPending = pending;
                     card.StatusText = "等待蓝牙";
                     card.StatusLine = "2.4G 已连接 · 等待蓝牙电量";
                     card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
@@ -1220,7 +1230,11 @@ namespace WirelessBattery
                 }
                 else
                 {
-                    // 默认严格口径：接收器在线不等于耳机在用（2.4G 链路拿不到状态回报）。
+                    // 严格口径：这一档“没有任何正向连接证据”，不走 90 秒断开宽限
+                    // （那段宽限是给“刚刚还在、现在读不到”用的；这里从一开始就没读到）。
+                    card.Connected = false;
+                    card.LinkPending = false;
+                    if (effective) Settings.MarkDisconnected("K02BS");
                     card.StatusText = "未确认";
                     card.StatusLine = "接收器在线 · 耳机状态未确认";
                     card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
@@ -1235,7 +1249,7 @@ namespace WirelessBattery
             }
 
             int? last = Settings.GetLastLevel("K02BS");
-            if (btConnected)
+            if (state == K02BSLinkState.Bluetooth || state == K02BSLinkState.Dual)
             {
                 card.Mode = "蓝牙";
                 card.Connected = effective;

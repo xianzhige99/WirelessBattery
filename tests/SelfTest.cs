@@ -354,20 +354,18 @@ namespace WirelessBattery
         }
 
         /// <summary>
-        /// K02BS 链路判定真值表。核心约束：只有接收器在线（dongle=true、蓝牙两项皆 false）时
-        /// 默认不能算「已连接」——2.4G 链路拿不到耳机状态，这正是「关机仍显示双模」的根因。
+        /// K02BS 链路判定真值表。两条硬约束：
+        ///   1) 只有接收器在线（dongle=true、蓝牙=false）默认不能算「已连接」；
+        ///   2) HFP 电量属性不算连接证据——关机后它仍会残留，不能进 Decide 的输入。
         /// </summary>
         private static void TestK02BSJudge()
         {
             Console.WriteLine("[K02BS 链路判定]");
 
-            Equal((int)K02BSLinkJudge.Decide(false, false, false), (int)K02BSLinkState.None, "都没有 → None");
-            Equal((int)K02BSLinkJudge.Decide(true, false, false), (int)K02BSLinkState.DongleOnly, "只有接收器 → DongleOnly");
-            Equal((int)K02BSLinkJudge.Decide(false, true, false), (int)K02BSLinkState.Bluetooth, "端点激活 → Bluetooth");
-            Equal((int)K02BSLinkJudge.Decide(false, false, true), (int)K02BSLinkState.Bluetooth, "有蓝牙电量 → Bluetooth");
-            Equal((int)K02BSLinkJudge.Decide(true, true, false), (int)K02BSLinkState.Dual, "接收器 + 端点 → Dual");
-            Equal((int)K02BSLinkJudge.Decide(true, false, true), (int)K02BSLinkState.Dual, "接收器 + 蓝牙电量 → Dual");
-            Equal((int)K02BSLinkJudge.Decide(true, true, true), (int)K02BSLinkState.Dual, "三者都有 → Dual");
+            Equal((int)K02BSLinkJudge.Decide(false, false), (int)K02BSLinkState.None, "都没有 → None");
+            Equal((int)K02BSLinkJudge.Decide(true, false), (int)K02BSLinkState.DongleOnly, "只有接收器 → DongleOnly");
+            Equal((int)K02BSLinkJudge.Decide(false, true), (int)K02BSLinkState.Bluetooth, "蓝牙链路通 → Bluetooth");
+            Equal((int)K02BSLinkJudge.Decide(true, true), (int)K02BSLinkState.Dual, "接收器 + 蓝牙 → Dual");
 
             Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None, false), "None 不算已连接", "应为 false");
             Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None, true), "None 即使放宽也不算已连接", "应为 false");

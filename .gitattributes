@@ -1,0 +1,14 @@
+* text=auto eol=crlf
+
+*.cs    text eol=crlf
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.txt   text eol=crlf
+*.md    text eol=crlf
+*.ini   text eol=crlf
+
+*.ico   binary
+*.png   binary
+*.lnk   binary
+*.exe   binary

@@ -1,9 +1,5 @@
 # 构建产物（由 build.ps1 生成，不入库）
-bin/*.exe
-bin/**/*.exe
-bin/*.pdb
-bin/启动设备电量.cmd
-bin/打开设备电量.lnk
+bin/
 build-info.txt
 *.zip
 

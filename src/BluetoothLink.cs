@@ -85,15 +85,14 @@ namespace WirelessBattery
         public static int QueryConnected(string namePart)
         {
             if (string.IsNullOrEmpty(namePart)) return Unknown;
-            IntPtr hFind = IntPtr.Zero;
+            IntPtr hFindRadio = IntPtr.Zero;
             IntPtr hRadio = IntPtr.Zero;
             try
             {
                 BLUETOOTH_FIND_RADIO_PARAMS rp = new BLUETOOTH_FIND_RADIO_PARAMS();
                 rp.dwSize = Marshal.SizeOf(typeof(BLUETOOTH_FIND_RADIO_PARAMS));
-                hFind = BluetoothFindFirstRadio(ref rp, out hRadio);
-                if (hFind == IntPtr.Zero) return Unknown;
-                if (hRadio != IntPtr.Zero) CloseHandle(hRadio);
+                hFindRadio = BluetoothFindFirstRadio(ref rp, out hRadio);
+                if (hFindRadio == IntPtr.Zero || hRadio == IntPtr.Zero) return Unknown;
 
                 BLUETOOTH_DEVICE_SEARCH_PARAMS p = new BLUETOOTH_DEVICE_SEARCH_PARAMS();
                 p.dwSize = Marshal.SizeOf(typeof(BLUETOOTH_DEVICE_SEARCH_PARAMS));
@@ -103,6 +102,7 @@ namespace WirelessBattery
                 p.fReturnUnknown = 0;
                 p.fIssueInquiry = 0;
                 p.cTimeoutMultiplier = 1;
+                p.hRadio = hRadio;
 
                 BLUETOOTH_DEVICE_INFO info = new BLUETOOTH_DEVICE_INFO();
                 info.dwSize = Marshal.SizeOf(typeof(BLUETOOTH_DEVICE_INFO));
@@ -129,7 +129,8 @@ namespace WirelessBattery
             catch { return Unknown; }
             finally
             {
-                if (hFind != IntPtr.Zero) { try { BluetoothFindRadioClose(hFind); } catch { } }
+                if (hFindRadio != IntPtr.Zero) { try { BluetoothFindRadioClose(hFindRadio); } catch { } }
+                if (hRadio != IntPtr.Zero) { try { CloseHandle(hRadio); } catch { } }
             }
         }
 

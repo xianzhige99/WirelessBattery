@@ -35,6 +35,7 @@ namespace WirelessBattery
             TestEstimateBt();
             TestGpwValidation();
             TestSanitizeName();
+            TestK02BSJudge();
 
             Console.WriteLine();
             Console.WriteLine("PASS " + _pass + "  FAIL " + _fail);
@@ -240,6 +241,7 @@ namespace WirelessBattery
                 a.IntervalSeconds = 45;
                 a.CloseToTray = false;
                 a.AutoStartWanted = false;
+                a.K02BSSoleDongleAsConnected = true;
                 a.SetDeviceEnabled("BT:TEST HEADSET", false);
                 a.SetDeviceName("MCHOSE", "我的鼠标");
                 a.GetEstimateConfig("K02BS").FullHours = 77;
@@ -260,6 +262,7 @@ namespace WirelessBattery
                 Equal(b.IntervalSeconds, 45, "Interval 往返一致");
                 Check(!b.CloseToTray, "CloseToTray 往返一致", "实际为 true");
                 Check(!b.AutoStartWanted, "AutoStartWanted 往返一致", "实际为 true");
+                Check(b.K02BSSoleDongleAsConnected, "K02BS 严格口径开关往返一致", "实际为 false");
                 Check(!b.IsDeviceEnabled("BT:TEST HEADSET"), "未勾选状态往返一致", "实际为已勾选");
                 Check(b.GetDeviceName("MCHOSE") == "我的鼠标", "自定义设备名往返一致", "实际为空或不同");
                 Near(b.GetEstimateConfig("K02BS").FullHours, 77, 0.001, "满电小时往返一致");
@@ -348,6 +351,36 @@ namespace WirelessBattery
             string longName = new string('长', 40);
             Check(ConfigStore.SanitizeName(longName).Length == ConfigStore.MaxDeviceNameLength,
                 "超长名截断到 32 字", "长度不一致");
+        }
+
+        /// <summary>
+        /// K02BS 链路判定真值表。核心约束：只有接收器在线（dongle=true、蓝牙两项皆 false）时
+        /// 默认不能算「已连接」——2.4G 链路拿不到耳机状态，这正是「关机仍显示双模」的根因。
+        /// </summary>
+        private static void TestK02BSJudge()
+        {
+            Console.WriteLine("[K02BS 链路判定]");
+
+            Equal((int)K02BSLinkJudge.Decide(false, false, false), (int)K02BSLinkState.None, "都没有 → None");
+            Equal((int)K02BSLinkJudge.Decide(true, false, false), (int)K02BSLinkState.DongleOnly, "只有接收器 → DongleOnly");
+            Equal((int)K02BSLinkJudge.Decide(false, true, false), (int)K02BSLinkState.Bluetooth, "端点激活 → Bluetooth");
+            Equal((int)K02BSLinkJudge.Decide(false, false, true), (int)K02BSLinkState.Bluetooth, "有蓝牙电量 → Bluetooth");
+            Equal((int)K02BSLinkJudge.Decide(true, true, false), (int)K02BSLinkState.Dual, "接收器 + 端点 → Dual");
+            Equal((int)K02BSLinkJudge.Decide(true, false, true), (int)K02BSLinkState.Dual, "接收器 + 蓝牙电量 → Dual");
+            Equal((int)K02BSLinkJudge.Decide(true, true, true), (int)K02BSLinkState.Dual, "三者都有 → Dual");
+
+            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None, false), "None 不算已连接", "应为 false");
+            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None, true), "None 即使放宽也不算已连接", "应为 false");
+            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.DongleOnly, false),
+                "严格口径：只有接收器不算已连接（耳机关机不骗人）", "应为 false");
+            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.DongleOnly, true),
+                "放宽口径：只有接收器也算已连接（2.4G 专用场景）", "应为 true");
+            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.Bluetooth, false), "蓝牙连接算已连接", "应为 false");
+            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.Dual, false), "双模算已连接", "应为 false");
+
+            Check(K02BSLinkJudge.ModeText(K02BSLinkState.Dual) == "双模", "Dual 文案为双模", "文案不符");
+            Check(K02BSLinkJudge.ModeText(K02BSLinkState.DongleOnly) == "2.4G", "DongleOnly 文案为 2.4G", "文案不符");
+            Check(K02BSLinkJudge.ModeText(K02BSLinkState.None) == "未连接", "None 文案为未连接", "文案不符");
         }
     }
 }

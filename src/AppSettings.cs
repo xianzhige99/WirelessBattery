@@ -132,6 +132,9 @@ namespace WirelessBattery
         public bool AutoStart;
         public bool AutoStartWanted = true;
         public bool NeedsAutoStartSetup;
+        // K02BS：只有接收器在线（2.4G 端点存在）时是否也算“已连接”。
+        // 默认 false —— 2.4G 链路不回报耳机状态，接收器插着不等于耳机在用。
+        public bool K02BSSoleDongleAsConnected;
         public Dictionary<string, EstimateConfig> Estimates = new Dictionary<string, EstimateConfig>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, RuntimeState> Runtime = new Dictionary<string, RuntimeState>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, bool> EnabledDevices = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);

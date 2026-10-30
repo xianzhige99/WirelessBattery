@@ -1112,19 +1112,20 @@ namespace WirelessBattery
             BtBatteryInfo b = FindBt(bt, "K02BS");
             bool btConnected = b != null && (b.HasProperty || b.Level.HasValue);
             AudioLinkInfo link = AudioLink.IsK02BSLinked();
-            WriteLog("K02BS 2.4G: " + link.Detail + " ; BT=" + (btConnected ? "connected" : "-"));
+            K02BSLinkState state = K02BSLinkJudge.Decide(link.DonglePresent, link.BluetoothLinked, btConnected);
+            WriteLog("K02BS 端点: " + link.Detail + " ; BT电量=" + (btConnected ? "有" : "-")
+                + " ; 判定=" + K02BSLinkJudge.ModeText(state));
 
             EstimateConfig cfg = Settings.GetEstimateConfig("K02BS");
             card.CanEstimate = true;
             card.EstimateEnabled = cfg.Enabled;
 
-            bool physical = link.Linked || btConnected;
+            // 只有接收器在线时是否算“已连接”，取决于用户的取舍（默认不算，见 K02BSLinkJudge）。
+            bool physical = K02BSLinkJudge.CountsAsConnected(state, Settings.K02BSSoleDongleAsConnected);
             bool pending;
             bool effective = Settings.UpdateLinkState("K02BS", physical, out pending);
 
-            string mode = link.Linked
-                ? (btConnected ? "双模" : "2.4G")
-                : (btConnected ? "蓝牙" : "未连接");
+            string mode = K02BSLinkJudge.ModeText(state);
             RuntimeState st = Settings.GetRuntime("K02BS");
             if (!string.Equals(st.LastMode, mode, StringComparison.Ordinal))
             {
@@ -1181,37 +1182,55 @@ namespace WirelessBattery
                     Settings.SaveDeferred();
                 }
                 st.Frozen = false;
-                string detail = "Windows 蓝牙 HFP" + (link.Linked ? " · 2.4G 同时连接" : "");
+                string detail = "Windows 蓝牙 HFP" + (link.DonglePresent ? " · 2.4G 接收器在线" : "");
                 ApplyBtEstimate(card, b.Level.Value, cfg, mode, detail);
                 card.Connected = effective;
                 card.LinkPending = pending;
                 return card;
             }
 
-            if (link.Linked)
+            if (state == K02BSLinkState.DongleOnly)
             {
                 // 先尝试厂商报文（当前固件没有电量，但保留未来兼容）
                 BatteryResult r = ActionsReader.Read(g, WriteLog);
                 if (r != null && r.Ok && r.Level.HasValue)
                 {
-                    ApplyMeasured(card, r, "双模", "Actions 厂商报文");
+                    ApplyMeasured(card, r, "2.4G", "Actions 厂商报文");
                     return card;
                 }
 
-                // 按需求：2.4G 不做电量估算，只显示最后一次蓝牙读数/等待蓝牙上报
-                int? last2 = Settings.GetLastLevel("K02BS");
+                int? lastDongle = Settings.GetLastLevel("K02BS");
                 card.Mode = "2.4G";
                 card.Connected = effective;
                 card.LinkPending = pending;
-                card.HasLevel = last2.HasValue;
-                if (last2.HasValue) { card.Level = last2; card.LevelText = last2.Value + "%"; }
+                card.HasLevel = lastDongle.HasValue;
+                if (lastDongle.HasValue) { card.Level = lastDongle; card.LevelText = lastDongle.Value + "%"; }
                 else card.LevelText = "—";
-                card.StatusText = "等待蓝牙";
-                card.StatusLine = "2.4G 已连接 · 等待蓝牙电量";
-                card.EstimateHint = last2.HasValue ? "最后电量" : "";
-                card.Detail = "2.4G 接收器不上报电量；连接蓝牙后按阶梯估算";
-                card.Source = "2.4G 音频链路";
-                card.Accent = last2.HasValue ? (last2.Value < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor) : Color.FromArgb(152, 162, 179);
+
+                if (Settings.K02BSSoleDongleAsConnected)
+                {
+                    // 用户明确选择“接收器在线即算已连接”（只用 2.4G 的场景）。
+                    card.StatusText = "等待蓝牙";
+                    card.StatusLine = "2.4G 已连接 · 等待蓝牙电量";
+                    card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
+                    card.Detail = "2.4G 接收器不上报电量；连接蓝牙后按阶梯估算";
+                    card.Accent = lastDongle.HasValue
+                        ? (lastDongle.Value < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor)
+                        : Color.FromArgb(152, 162, 179);
+                }
+                else
+                {
+                    // 默认严格口径：接收器在线不等于耳机在用（2.4G 链路拿不到状态回报）。
+                    card.StatusText = "未确认";
+                    card.StatusLine = "接收器在线 · 耳机状态未确认";
+                    card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
+                    card.Detail = "2.4G 链路不回报连接状态；蓝牙连上后才能确认真实电量";
+                    card.IsError = false;
+                    card.Accent = lastDongle.HasValue
+                        ? (lastDongle.Value < 30 ? Color.FromArgb(240, 68, 56) : Color.FromArgb(152, 162, 179))
+                        : Color.FromArgb(152, 162, 179);
+                }
+                card.Source = "2.4G 音频端点（接收器在线）";
                 return card;
             }
 
@@ -1259,10 +1278,10 @@ namespace WirelessBattery
             if (last.HasValue) { card.Level = last; card.LevelText = last.Value + "%"; }
             else card.LevelText = "—";
             card.StatusText = "未连接";
-            card.StatusLine = last.HasValue ? "未连接 · 最后电量" : "2.4G 音频端点未激活";
+            card.StatusLine = last.HasValue ? "未连接 · 最后电量" : "接收器未检测到，蓝牙也未连接";
             card.EstimateHint = last.HasValue ? "最后电量" : "";
-            card.Detail = "耳机可能关机、切到了蓝牙，或接收器未插好";
-            card.Source = "2.4G 音频链路检测";
+            card.Detail = "耳机可能关机、接收器被拔掉，或蓝牙已断开";
+            card.Source = "音频端点 / 蓝牙链路检测";
             card.Accent = last.HasValue ? (last.Value < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor) : Color.FromArgb(152, 162, 179);
             return card;
         }

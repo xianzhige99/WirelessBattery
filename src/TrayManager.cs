@@ -57,7 +57,7 @@ namespace WirelessBattery
         private readonly Action _settings;
         private readonly Action _exit;
         private readonly string _key;
-        private readonly List<IntPtr> _handles = new List<IntPtr>();
+        private IntPtr _currentHandle;
         private Icon _image;
         private string _lastText = "";
         private string _lastSig = "";
@@ -76,7 +76,7 @@ namespace WirelessBattery
             _icon.Text = "无线设备电量";
             IntPtr h;
             _image = IconFactory.Create(null, Color.FromArgb(152, 162, 179), out h);
-            _handles.Add(h);
+            _currentHandle = h;
             _icon.Icon = _image;
             _icon.Visible = true;
             _icon.DoubleClick += delegate { _show(); };
@@ -132,11 +132,15 @@ namespace WirelessBattery
             {
                 IntPtr h;
                 Icon next = IconFactory.Create(iconLevel, color, out h);
-                _handles.Add(h);
+                IntPtr oldHandle = _currentHandle;
                 Icon old = _image;
                 _image = next;
+                _currentHandle = h;
                 _icon.Icon = _image;
                 if (old != null) old.Dispose();
+                // 系统在 NIM_MODIFY 时已复制图标，旧句柄换下来即可销毁。
+                // 只在退出时统一销毁会让长跑进程持续累积 GDI 句柄（阶梯推算值每轮都在变）。
+                if (oldHandle != IntPtr.Zero) IconFactory.Destroy(oldHandle);
                 _lastSig = sig;
             }
         }
@@ -150,8 +154,11 @@ namespace WirelessBattery
             }
             catch { }
             if (_image != null) { _image.Dispose(); _image = null; }
-            for (int i = 0; i < _handles.Count; i++) IconFactory.Destroy(_handles[i]);
-            _handles.Clear();
+            if (_currentHandle != IntPtr.Zero)
+            {
+                IconFactory.Destroy(_currentHandle);
+                _currentHandle = IntPtr.Zero;
+            }
         }
     }
 
@@ -163,7 +170,7 @@ namespace WirelessBattery
         private readonly Action _refresh;
         private readonly Action _settings;
         private readonly Action _exit;
-        private readonly List<IntPtr> _hostHandles = new List<IntPtr>();
+        private IntPtr _hostHandle;
         private Icon _hostImage;
         private string _hostSig = "";
         private string _hostText = "";
@@ -272,11 +279,13 @@ namespace WirelessBattery
                 {
                     IntPtr h;
                     Icon next = IconFactory.Create(level, color, out h);
-                    _hostHandles.Add(h);
+                    IntPtr oldHandle = _hostHandle;
                     Icon old = _hostImage;
                     _hostImage = next;
+                    _hostHandle = h;
                     _host.Icon = _hostImage;
                     if (old != null) old.Dispose();
+                    if (oldHandle != IntPtr.Zero) IconFactory.Destroy(oldHandle);
                 }
                 else
                 {
@@ -284,6 +293,11 @@ namespace WirelessBattery
                     _hostImage = null;
                     _host.Icon = AppIcon.Shared;
                     if (old != null) old.Dispose();
+                    if (_hostHandle != IntPtr.Zero)
+                    {
+                        IconFactory.Destroy(_hostHandle);
+                        _hostHandle = IntPtr.Zero;
+                    }
                 }
                 _hostSig = sig;
             }
@@ -318,8 +332,11 @@ namespace WirelessBattery
             }
             catch { }
             if (_hostImage != null) { _hostImage.Dispose(); _hostImage = null; }
-            for (int i = 0; i < _hostHandles.Count; i++) IconFactory.Destroy(_hostHandles[i]);
-            _hostHandles.Clear();
+            if (_hostHandle != IntPtr.Zero)
+            {
+                IconFactory.Destroy(_hostHandle);
+                _hostHandle = IntPtr.Zero;
+            }
         }
     }
 }

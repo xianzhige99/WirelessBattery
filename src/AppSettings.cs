@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Security;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -123,6 +124,8 @@ namespace WirelessBattery
         private const string RunValue = "WirelessBattery";
         private const string TaskName = "WirelessBattery_AutoStart";
         private readonly string _path;
+        // 1 = 有未落盘的改动。运行时状态写得太频繁，改为合并写（见 SaveDeferred/Flush）。
+        private int _dirty;
 
         public int IntervalSeconds = 60;
         public bool CloseToTray = true;
@@ -329,7 +332,31 @@ namespace WirelessBattery
         public void Save()
         {
             // 原子写、写锁、键名拼装都在 ConfigStore；这里保持“写失败不抛异常”的原有语义。
+            Interlocked.Exchange(ref _dirty, 0);
             ConfigStore.Save(_path, this);
+        }
+
+        /// <summary>
+        /// 只在内存里改、把落盘推迟到下次 Flush()。用于每轮刷新都会变的运行时状态
+        /// （最后电量、连接状态、K02BS 双模快照），避免 60 秒一次刷新就重写整个 settings.ini。
+        /// </summary>
+        public void SaveDeferred()
+        {
+            Interlocked.Exchange(ref _dirty, 1);
+        }
+
+        /// <summary>把挂起的改动落盘；没有改动就什么都不做。由 TrayContext 的合并写定时器与 Exit 调用。</summary>
+        public void Flush()
+        {
+            if (Interlocked.Exchange(ref _dirty, 0) == 0) return;
+            try { ConfigStore.Save(_path, this); }
+            catch { }
+        }
+
+        /// <summary>是否有尚未落盘的改动（仅诊断用）。</summary>
+        public bool HasPendingSave
+        {
+            get { return Interlocked.CompareExchange(ref _dirty, 0, 0) != 0; }
         }
         /// <summary>
         /// 把旧键上的估算/运行状态搬到新的型号级键。
@@ -574,7 +601,7 @@ namespace WirelessBattery
                 st.SinceUtc = DateTime.UtcNow;
                 st.LastLevel = 100;
                 st.HasLastLevel = true;
-                Save();
+                SaveDeferred();
             }
         }
 
@@ -584,7 +611,7 @@ namespace WirelessBattery
             if (st.Connected)
             {
                 st.Connected = false;
-                Save();
+                SaveDeferred();
             }
         }
 
@@ -612,7 +639,7 @@ namespace WirelessBattery
                     st.Connected = true;
                     changed = true;
                 }
-                if (changed) Save();
+                if (changed) SaveDeferred();
                 return true;
             }
 
@@ -620,7 +647,7 @@ namespace WirelessBattery
             if (!wasConnected)
             {
                 pending = false;
-                if (st.Connected) { st.Connected = false; Save(); }
+                if (st.Connected) { st.Connected = false; SaveDeferred(); }
                 return false;
             }
 
@@ -641,7 +668,7 @@ namespace WirelessBattery
             {
                 pending = true;
             }
-            if (changed) Save();
+            if (changed) SaveDeferred();
             return pending || st.Connected;
         }
 
@@ -652,7 +679,7 @@ namespace WirelessBattery
             {
                 st.HasLastLevel = true;
                 st.LastLevel = level;
-                Save();
+                SaveDeferred();
             }
         }
 
@@ -671,6 +698,9 @@ namespace WirelessBattery
 
         public void SetDeviceEnabled(string deviceKey, bool enabled)
         {
+            // 顺手补一条“已发现”：否则这个键不会出现在 GetDeviceKeys 里，
+            // 勾选状态也就不会被写进 settings.ini（表现为“取消勾选重启后又回来了”）。
+            SeedDiscovered(deviceKey);
             EnabledDevices[deviceKey] = enabled;
             Save();
         }
@@ -1237,8 +1267,8 @@ namespace WirelessBattery
         }
 
         /// <summary>
-        /// 在程序目录创建“打开设备电量.lnk”。快捷方式指向系统自带的 PowerShell，
-        /// 由它启动 exe，从而避开资源管理器对下载 exe 的 SmartScreen 拦截。
+        /// 在程序目录创建“打开设备电量.lnk”。快捷方式指向系统自带的 cmd.exe，
+        /// 由 启动设备电量.cmd 先 Unblock-File 再 start，从而避开资源管理器对下载 exe 的 SmartScreen 拦截。
         /// </summary>
         public static bool CreateOpenShortcut(string shortcutPath)
         {
@@ -1264,8 +1294,8 @@ namespace WirelessBattery
         }
 
         /// <summary>
-        /// 通过 PowerShell 启动 exe，避免资源管理器对下载的 exe 直接弹出 SmartScreen。
-        /// 快捷方式本身指向系统自带的 powershell.exe，不携带 exe 的“网络来源”标记。
+        /// 经 cmd.exe 调 启动设备电量.cmd（先 Unblock-File 再 start），
+        /// 避免资源管理器对下载的 exe 直接弹出 SmartScreen。快捷方式指向系统自带 cmd.exe。
         /// </summary>
         private static bool CreateLauncherStartupShortcut()
         {

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -118,9 +117,8 @@ namespace WirelessBattery
                 }
             }
 
-            // 新版本换用 v2 单实例名，启动后清理旧版/旧中文副本进程，
-            // 避免旧的 Medium 实例继续占着托盘/设置。
-            KillOldInstances();
+            // 不再按进程名强杀同名进程：多开已由上面的 v2 命名互斥挡住，
+            // 强杀会误伤用户另存的调试副本，且违背“不粗暴终止进程”。
 
             try
             {
@@ -159,7 +157,18 @@ namespace WirelessBattery
         private static void ForwardToExistingInstance(bool openSettings)
         {
             if (openSettings && SignalEvent(SettingsEventName)) return;
-            SignalEvent(ShowEventName);
+            if (SignalEvent(ShowEventName)) return;
+
+            // 两个事件都发不出去（典型场景：主实例以管理员运行、本实例是普通权限，
+            // 或事件对象被策略挡住）。此时不再静默退出，否则用户看到的是“双击没反应”。
+            try
+            {
+                MessageBox.Show(
+                    "设备电量已经在运行，但无法唤出它的窗口。\r\n\r\n" +
+                    "如果它是以管理员身份运行的，请从任务栏托盘图标打开；或先退出它再启动。",
+                    "设备电量", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch { }
         }
 
         private static bool SignalEvent(string name)
@@ -183,31 +192,6 @@ namespace WirelessBattery
             _settingsEvent = null;
         }
 
-        /// <summary>
-        /// 结束旧版本实例（旧 mutex、旧中文副本）。新版本使用 v2 mutex，
-        /// 因此可以先启动再清理，不会把自己锁在门外。
-        /// 权限不足时静默忽略，由托盘状态提示用户以管理员运行。
-        /// </summary>
-        private static void KillOldInstances()
-        {
-            int self = Process.GetCurrentProcess().Id;
-            Process[] all = Process.GetProcesses();
-            for (int i = 0; i < all.Length; i++)
-            {
-                try
-                {
-                    Process p = all[i];
-                    if (p.Id == self) continue;
-                    string name = p.ProcessName;
-                    bool match = name.StartsWith("WirelessBattery", StringComparison.OrdinalIgnoreCase)
-                        || name.Equals("无线设备电量", StringComparison.OrdinalIgnoreCase);
-                    if (!match) continue;
-                    try { p.Kill(); p.WaitForExit(1500); } catch { }
-                }
-                catch { }
-            }
-        }
-
         private static bool HasArg(string[] args, string name)
         {
             for (int i = 0; i < args.Length; i++)
@@ -215,12 +199,21 @@ namespace WirelessBattery
             return false;
         }
 
+        /// <summary>
+        /// 崩溃转储仅用于定位问题：写在 exe 同目录，超过 64KB 先清空再写，
+        /// 避免长期运行时无限增长（README 的“不写日志”指的是不写行为日志）。
+        /// </summary>
         private static void WriteCrash(string text)
         {
             try
             {
-                File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.txt"),
-                    DateTime.Now + " " + text + "\r\n");
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.txt");
+                FileInfo fi = new FileInfo(path);
+                if (fi.Exists && fi.Length > 64 * 1024)
+                {
+                    try { fi.Delete(); } catch { }
+                }
+                File.AppendAllText(path, DateTime.Now + " " + text + "\r\n");
             }
             catch { }
         }

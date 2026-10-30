@@ -20,6 +20,7 @@ namespace WirelessBattery
         private System.Windows.Forms.Timer _cleanupTimer;
         private System.Windows.Forms.Timer _recheckTimer;
         private System.Windows.Forms.Timer _modeTimer;
+        private System.Windows.Forms.Timer _flushTimer;
         private MainForm _form;
         private ScanResult _lastResult;
         private bool _busy;
@@ -122,6 +123,13 @@ namespace WirelessBattery
             _timer.Interval = Math.Max(30, Settings.IntervalSeconds) * 1000;
             _timer.Tick += delegate { Refresh(); };
             _timer.Start();
+
+            // 运行时状态（最后电量、连接状态、双模快照）改了只标脏，
+            // 由这个定时器合并成一次整文件写；退出时再冲一次，避免刷新一轮写几次 ini。
+            _flushTimer = new System.Windows.Forms.Timer();
+            _flushTimer.Interval = 20000;
+            _flushTimer.Tick += delegate { Settings.Flush(); };
+            _flushTimer.Start();
 
             // 每次启动都后台核对一遍自启入口（计划任务/启动文件夹/vbs/注册表）是否仍
             // 指向当前 exe，不匹配就按现有优先级顺序静默重写；结果只呈现到状态栏。
@@ -532,6 +540,8 @@ namespace WirelessBattery
             _exit = true;
             try { if (_showEvent != null) _showEvent.Set(); } catch { }
             try { if (_timer != null) _timer.Stop(); } catch { }
+            try { if (_flushTimer != null) { _flushTimer.Stop(); _flushTimer.Dispose(); _flushTimer = null; } } catch { }
+            try { Settings.Flush(); } catch { }
             try { if (_trayRetry != null) { _trayRetry.Stop(); _trayRetry.Dispose(); _trayRetry = null; } } catch { }
             try { if (_cleanupTimer != null) { _cleanupTimer.Stop(); _cleanupTimer.Dispose(); _cleanupTimer = null; } } catch { }
             try { if (_recheckTimer != null) { _recheckTimer.Stop(); _recheckTimer.Dispose(); _recheckTimer = null; } } catch { }

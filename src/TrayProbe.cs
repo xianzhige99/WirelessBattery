@@ -13,6 +13,12 @@ namespace WirelessBattery
         private const uint NIF_ICON = 0x02;
         private const uint NIF_TIP = 0x04;
 
+        /// <summary>
+        /// 探针专用的 tooltip：写进注册表后用这个唯一串识别“这是自己的探针残留”，
+        /// 不再靠通用的“设备电量”去猜，避免误删真正的托盘图标设置。
+        /// </summary>
+        private const string ProbeTip = "设备电量托盘检测";
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct NOTIFYICONDATA
         {
@@ -51,7 +57,7 @@ namespace WirelessBattery
                 data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
                 data.uCallbackMessage = 0x0400 + 1;
                 data.hIcon = SystemIcons.Application.Handle;
-                data.szTip = "设备电量";
+                data.szTip = ProbeTip;
                 bool ok = Shell_NotifyIcon(NIM_ADD, ref data);
                 if (ok)
                 {
@@ -80,8 +86,9 @@ namespace WirelessBattery
                             object uidValue = sub.GetValue("UID");
                             uint uid = 0;
                             try { if (uidValue != null) uid = Convert.ToUInt32(uidValue); } catch { }
-                            if (tip == "设备电量托盘检测" || (uid == 0x5A5A && tip == "设备电量"))
+                            if (tip == ProbeTip || (uid == 0x5A5A && tip == "设备电量"))
                             {
+                                // 第二个条件只为清理旧版本探针留下的键（旧版 tooltip 就是“设备电量”）。
                                 try { root.DeleteSubKeyTree(names[i], false); } catch { }
                             }
                         }

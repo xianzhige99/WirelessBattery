@@ -1045,7 +1045,8 @@ namespace WirelessBattery
                     st.LastDualReported = reported;
                     st.LastDualHeldHours = used;
                     st.Frozen = false;
-                    Settings.Save();
+                    // 双模下每次刷新都会更新快照：只在内存改，由合并写统一落盘。
+                    Settings.SaveDeferred();
                 }
             }
             else
@@ -1130,7 +1131,7 @@ namespace WirelessBattery
                 st.LastMode = mode;
                 st.ModeSinceUtc = DateTime.UtcNow;
                 st.ModeCheckDone = false;
-                Settings.Save();
+                Settings.SaveDeferred();
             }
             double modeElapsed = (DateTime.UtcNow - st.ModeSinceUtc).TotalSeconds;
             if (modeElapsed < 0) modeElapsed = 0;
@@ -1146,7 +1147,7 @@ namespace WirelessBattery
             if (trackMode && !st.ModeCheckDone && modeElapsed >= 3.0)
             {
                 st.ModeCheckDone = true;
-                Settings.Save();
+                Settings.SaveDeferred();
             }
 
             if (cfg.Enabled && mode == "蓝牙")
@@ -1161,7 +1162,7 @@ namespace WirelessBattery
                     }
                     st.HoldFrozen = true;
                     st.FrozenHeldHours = held;
-                    Settings.Save();
+                    Settings.SaveDeferred();
                 }
                 st.ModeCheckDone = true;
             }
@@ -1177,7 +1178,7 @@ namespace WirelessBattery
                         st.BtStageUtc = DateTime.UtcNow.AddHours(-Math.Max(0, st.FrozenHeldHours));
                     }
                     st.HoldFrozen = false;
-                    Settings.Save();
+                    Settings.SaveDeferred();
                 }
                 st.Frozen = false;
                 string detail = "Windows 蓝牙 HFP" + (link.Linked ? " · 2.4G 同时连接" : "");

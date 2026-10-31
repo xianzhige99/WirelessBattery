@@ -11,7 +11,6 @@ namespace WirelessBattery
         private readonly Action _onSaved;
         private CheckBox _autoStart;
         private CheckBox _closeToTray;
-        private CheckBox _k02bsSoleDongle;
         private ComboBox _interval;
         private CheckedListBox _devices;
         private readonly List<string> _deviceKeys = new List<string>();
@@ -21,7 +20,7 @@ namespace WirelessBattery
             _settings = settings;
             _onSaved = onSaved;
             Text = "设置";
-            ClientSize = new Size(520, 500);
+            ClientSize = new Size(520, 450);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -37,11 +36,10 @@ namespace WirelessBattery
             table.ColumnCount = 2;
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58f));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42f));
-            table.RowCount = 8;
+            table.RowCount = 7;
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 34f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 34f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 52f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 64f));
@@ -68,20 +66,11 @@ namespace WirelessBattery
             table.Controls.Add(_closeToTray, 0, 2);
             table.SetColumnSpan(_closeToTray, 2);
 
-            _k02bsSoleDongle = new CheckBox();
-            _k02bsSoleDongle.Text = "K02BS 只插接收器、耳机未开机时，也显示为已连接（较宽松）";
-            _k02bsSoleDongle.Checked = _settings.K02BSSoleDongleAsConnected;
-            _k02bsSoleDongle.Dock = DockStyle.Fill;
-            _k02bsSoleDongle.Margin = new Padding(2, 2, 2, 4);
-            _k02bsSoleDongle.Font = Ui.Font(8.8f, FontStyle.Regular);
-            table.Controls.Add(_k02bsSoleDongle, 0, 3);
-            table.SetColumnSpan(_k02bsSoleDongle, 2);
-
             Label refreshLabel = new Label();
             refreshLabel.Text = "自动刷新间隔";
             refreshLabel.TextAlign = ContentAlignment.MiddleLeft;
             refreshLabel.Dock = DockStyle.Fill;
-            table.Controls.Add(refreshLabel, 0, 4);
+            table.Controls.Add(refreshLabel, 0, 3);
 
             _interval = new ComboBox();
             _interval.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -92,13 +81,13 @@ namespace WirelessBattery
             else if (_settings.IntervalSeconds <= 60) _interval.SelectedIndex = 1;
             else if (_settings.IntervalSeconds <= 300) _interval.SelectedIndex = 2;
             else _interval.SelectedIndex = 3;
-            table.Controls.Add(_interval, 1, 4);
+            table.Controls.Add(_interval, 1, 3);
 
             Label deviceLabel = new Label();
             deviceLabel.Text = "设备（勾选后才会读取电量并显示卡片）";
             deviceLabel.Dock = DockStyle.Fill;
             deviceLabel.TextAlign = ContentAlignment.BottomLeft;
-            table.Controls.Add(deviceLabel, 0, 5);
+            table.Controls.Add(deviceLabel, 0, 4);
             table.SetColumnSpan(deviceLabel, 2);
 
             _devices = new CheckedListBox();
@@ -117,7 +106,7 @@ namespace WirelessBattery
                 _deviceKeys.Add(key);
                 _devices.Items.Add(_settings.TitleOf(key), _settings.IsDeviceEnabled(key));
             }
-            table.Controls.Add(_devices, 0, 6);
+            table.Controls.Add(_devices, 0, 5);
             table.SetColumnSpan(_devices, 2);
 
             Label hint = new Label();
@@ -126,7 +115,7 @@ namespace WirelessBattery
             hint.ForeColor = Ui.Muted;
             hint.Font = Ui.Font(8.4f, FontStyle.Regular);
             hint.Margin = new Padding(4, 8, 4, 4);
-            table.Controls.Add(hint, 0, 7);
+            table.Controls.Add(hint, 0, 6);
             table.SetColumnSpan(hint, 2);
 
             Panel bottom = new Panel();
@@ -191,7 +180,6 @@ namespace WirelessBattery
             }
             _settings.IntervalSeconds = interval;
             _settings.CloseToTray = _closeToTray.Checked;
-            _settings.K02BSSoleDongleAsConnected = _k02bsSoleDongle.Checked;
             for (int i = 0; i < _deviceKeys.Count && i < _devices.Items.Count; i++)
                 _settings.EnabledDevices[_deviceKeys[i]] = _devices.GetItemChecked(i);
             bool ok = _settings.ApplyAutoStart(_autoStart.Checked);

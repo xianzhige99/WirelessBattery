@@ -36,14 +36,12 @@ namespace WirelessBattery
         }
 
         /// <summary>
-        /// 该状态是否算作「已连接」。
-        /// DongleOnly 默认不算（耳机可能已经关机）；给「只用 2.4G」的用户留了一个开关。
+        /// 该状态是否算作「已连接」。只有接收器在线（DongleOnly）**不算**：
+        /// 2.4G 链路不回报耳机状态，接收器插着不等于耳机在用。
         /// </summary>
-        public static bool CountsAsConnected(K02BSLinkState state, bool soleDongleAsConnected)
+        public static bool CountsAsConnected(K02BSLinkState state)
         {
-            if (state == K02BSLinkState.None) return false;
-            if (state == K02BSLinkState.DongleOnly) return soleDongleAsConnected;
-            return true;
+            return state == K02BSLinkState.Dual || state == K02BSLinkState.Bluetooth;
         }
 
         public static string ModeText(K02BSLinkState state)

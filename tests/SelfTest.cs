@@ -242,7 +242,6 @@ namespace WirelessBattery
                 a.IntervalSeconds = 45;
                 a.CloseToTray = false;
                 a.AutoStartWanted = false;
-                a.K02BSSoleDongleAsConnected = true;
                 a.SetDeviceEnabled("BT:TEST HEADSET", false);
                 a.SetDeviceName("MCHOSE", "我的鼠标");
                 a.GetEstimateConfig("K02BS").FullHours = 77;
@@ -263,7 +262,6 @@ namespace WirelessBattery
                 Equal(b.IntervalSeconds, 45, "Interval 往返一致");
                 Check(!b.CloseToTray, "CloseToTray 往返一致", "实际为 true");
                 Check(!b.AutoStartWanted, "AutoStartWanted 往返一致", "实际为 true");
-                Check(b.K02BSSoleDongleAsConnected, "K02BS 严格口径开关往返一致", "实际为 false");
                 Check(!b.IsDeviceEnabled("BT:TEST HEADSET"), "未勾选状态往返一致", "实际为已勾选");
                 Check(b.GetDeviceName("MCHOSE") == "我的鼠标", "自定义设备名往返一致", "实际为空或不同");
                 Near(b.GetEstimateConfig("K02BS").FullHours, 77, 0.001, "满电小时往返一致");
@@ -401,14 +399,11 @@ namespace WirelessBattery
             Equal((int)K02BSLinkJudge.Decide(false, true), (int)K02BSLinkState.Bluetooth, "蓝牙链路通 → Bluetooth");
             Equal((int)K02BSLinkJudge.Decide(true, true), (int)K02BSLinkState.Dual, "接收器 + 蓝牙 → Dual");
 
-            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None, false), "None 不算已连接", "应为 false");
-            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None, true), "None 即使放宽也不算已连接", "应为 false");
-            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.DongleOnly, false),
-                "严格口径：只有接收器不算已连接（耳机关机不骗人）", "应为 false");
-            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.DongleOnly, true),
-                "放宽口径：只有接收器也算已连接（2.4G 专用场景）", "应为 true");
-            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.Bluetooth, false), "蓝牙连接算已连接", "应为 false");
-            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.Dual, false), "双模算已连接", "应为 false");
+            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.None), "None 不算已连接", "应为 true");
+            Check(!K02BSLinkJudge.CountsAsConnected(K02BSLinkState.DongleOnly),
+                "只有接收器不算已连接（耳机关机不骗人）", "应为 true");
+            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.Bluetooth), "蓝牙连接算已连接", "应为 false");
+            Check(K02BSLinkJudge.CountsAsConnected(K02BSLinkState.Dual), "双模算已连接", "应为 false");
 
             Check(K02BSLinkJudge.ModeText(K02BSLinkState.Dual) == "双模", "Dual 文案为双模", "文案不符");
             Check(K02BSLinkJudge.ModeText(K02BSLinkState.DongleOnly) == "2.4G", "DongleOnly 文案为 2.4G", "文案不符");

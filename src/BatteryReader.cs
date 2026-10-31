@@ -1136,7 +1136,7 @@ namespace WirelessBattery
                 Settings.PauseLadder("K02BS");
 
             // 只有接收器在线时是否算“已连接”，取决于用户的取舍（默认不算，见 K02BSLinkJudge）。
-            bool physical = K02BSLinkJudge.CountsAsConnected(state, Settings.K02BSSoleDongleAsConnected);
+            bool physical = K02BSLinkJudge.CountsAsConnected(state);
             bool pending;
             bool effective = Settings.UpdateLinkState("K02BS", physical, out pending);
 
@@ -1222,35 +1222,19 @@ namespace WirelessBattery
                 if (lastDongle.HasValue) { card.Level = lastDongle; card.LevelText = lastDongle.Value + "%"; }
                 else card.LevelText = "—";
 
-                if (Settings.K02BSSoleDongleAsConnected)
-                {
-                    // 用户明确选择“接收器在线即算已连接”（只用 2.4G 的场景）。
-                    card.Connected = effective;
-                    card.LinkPending = pending;
-                    card.StatusText = "等待蓝牙";
-                    card.StatusLine = "2.4G 已连接 · 等待蓝牙电量";
-                    card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
-                    card.Detail = "2.4G 接收器不上报电量；连接蓝牙后按阶梯估算";
-                    card.Accent = lastDongle.HasValue
-                        ? (lastDongle.Value < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor)
-                        : Color.FromArgb(152, 162, 179);
-                }
-                else
-                {
-                    // 严格口径：这一档“没有任何正向连接证据”，不走 90 秒断开宽限
-                    // （那段宽限是给“刚刚还在、现在读不到”用的；这里从一开始就没读到）。
-                    card.Connected = false;
-                    card.LinkPending = false;
-                    if (effective) Settings.MarkDisconnected("K02BS");
-                    card.StatusText = "未确认";
-                    card.StatusLine = "接收器在线 · 耳机状态未确认";
-                    card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
-                    card.Detail = "2.4G 链路不回报连接状态；蓝牙连上后才能确认真实电量";
-                    card.IsError = false;
-                    card.Accent = lastDongle.HasValue
-                        ? (lastDongle.Value < 30 ? Color.FromArgb(240, 68, 56) : Color.FromArgb(152, 162, 179))
-                        : Color.FromArgb(152, 162, 179);
-                }
+                // 这一档“没有任何正向连接证据”，不走 90 秒断开宽限
+                // （那段宽限是给“刚刚还在、现在读不到”用的；这里从一开始就没读到）。
+                card.Connected = false;
+                card.LinkPending = false;
+                if (effective) Settings.MarkDisconnected("K02BS");
+                card.StatusText = "未确认";
+                card.StatusLine = "接收器在线 · 耳机状态未确认";
+                card.EstimateHint = lastDongle.HasValue ? "最后电量" : "";
+                card.Detail = "2.4G 链路不回报连接状态；蓝牙连上后才能确认真实电量";
+                card.IsError = false;
+                card.Accent = lastDongle.HasValue
+                    ? (lastDongle.Value < 30 ? Color.FromArgb(240, 68, 56) : Color.FromArgb(152, 162, 179))
+                    : Color.FromArgb(152, 162, 179);
                 card.Source = "2.4G 音频端点（接收器在线）";
                 return card;
             }

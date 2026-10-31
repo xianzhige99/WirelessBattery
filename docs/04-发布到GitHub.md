@@ -117,16 +117,15 @@ git push origin v1.4.0
 
 ## 5. 发布 Release（用户下载的地方）
 
-1. 先生成发布包（在 Git Bash 里）：
+1. 先生成发布包。打开 **PowerShell**（开始菜单搜 "PowerShell"），执行：
 
-```bash
-cd "/c/Users/ZX/WorkBuddy/无线设备电量"
 ```
-然后用 PowerShell 执行（不要用 Git Bash）：
+cd C:\Users\ZX\WorkBuddy\无线设备电量
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1
 ```
-tools\pack.ps1
-```
-产物在 `dist\WirelessBattery-1.4.0.0-win64.zip`（约 200 KB，含 exe、两个 bat、使用说明、示例配置、构建信息）。
+
+产物在 `dist\WirelessBattery-1.4.0.0-win64.zip`（约 195 KB，含 exe、两个 bat、使用说明、
+示例配置、构建信息）。这个脚本会先重新编译，所以包里的 exe 一定是当前代码。
 
 2. 浏览器打开 https://github.com/xianzhige99/WirelessBattery/releases/new
 3. **Choose a tag** → 选 `v1.4.0`（刚推的）

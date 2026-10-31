@@ -3,10 +3,22 @@
 Windows 本地外设电量工具。支持 2.4G / 蓝牙双模，蓝牙阶梯电量带「上报值校验 + 时间推算」。
 实测设备：MCHOSE A7 V2 Pro+、西伯利亚 K02BS、罗技 G PRO Wireless（经接收器）。
 
-- 无第三方依赖，不联网
-- 800×600 圆角扁平界面；关闭窗口默认隐藏到托盘
-- 托盘按设备显示数字：鼠标绿色、耳机蓝色、低于 30% 红色
-- 设备断开后保留最后一次电量，并显示「未连接」
+无第三方依赖、不联网、不写行为日志；单 exe 绿色版，800×600 圆角扁平界面，关闭窗口隐藏到托盘。
+
+**[下载最新版](https://github.com/xianzhige99/WirelessBattery/releases/latest)** ·
+[使用说明](使用说明.txt) · [更新记录](CHANGELOG.md) · [已知限制](#已知限制)
+
+## 下载与安装
+
+1. 到 [Releases](https://github.com/xianzhige99/WirelessBattery/releases/latest) 下载
+   `WirelessBattery-x.y.z-win64.zip`，解压到**一个固定目录**（例如 `D:\Tools\WirelessBattery`）。
+   程序是便携式的，`settings.ini` 生成在 exe 同目录；放到桌面/临时目录后再删掉会丢配置。
+2. 双击 `解除锁定并启动.bat` 启动（它会先解除下载标记，避开 SmartScreen 拦截）。
+3. 插接收器、开设备；关闭窗口即隐藏到托盘。
+4. 首次启动会自动创建计划任务实现开机自启；不想自启可在「设置」里取消。
+
+> **从源码构建**：需要 Windows 自带的 .NET Framework 4.x（Win10/11 默认有），无需安装 SDK。
+> 执行 `build.ps1` 即可，详见下文「编译与测试」。
 
 ![界面](docs/screenshot.png)
 
@@ -121,8 +133,9 @@ UIPI 会阻止 Medium 程序注册 `Shell_NotifyIcon`。任选一种处理：
 
 - `app.manifest`：`asInvoker`、Windows 10/11 兼容、DPI 感知；
 - 版本信息、多尺寸图标；
-- `启动（无警告）.lnk` / `bin/打开设备电量.lnk`：快捷方式指向系统 `cmd.exe`，
-  由 `启动设备电量.cmd` 先 `Unblock-File` 再 `start`，不对带「网络来源」标记的 exe 直接 ShellExecute；
+- `解除锁定并启动.bat`：先 `Unblock-File` 再 `start`，不对带「网络来源」标记的 exe 直接 ShellExecute；
+- 程序启动后会在自己的目录生成 `启动设备电量.cmd` + `打开设备电量.lnk`（快捷方式指向 `cmd.exe`，
+  由脚本先解除锁定再启动），比直接双击 exe 更稳；
 - 计划任务直调 exe（不经资源管理器，因此登录启动不会弹 SmartScreen；也不经 cmd，
   避免 `cmd / start` 的令牌降级）。
 
@@ -202,23 +215,21 @@ UIPI 会阻止 Medium 程序注册 `Shell_NotifyIcon`。任选一种处理：
 ## 文件
 
 ```
-bin/WirelessBattery.exe       主程序（构建产物，不入库）
-bin/无线设备电量.exe          中文名副本（构建时自动复制）
-bin/启动设备电量.cmd          先解除锁定再启动的脚本（运行时生成）
-bin/打开设备电量.lnk          无 SmartScreen 的直接启动快捷方式（运行时生成）
-启动（无警告）.lnk            根目录快捷方式（指向上面的启动脚本）
-以管理员身份运行.bat          结束旧实例并以管理员权限重启（修复托盘）
-解除锁定并启动.bat            首次运行/解除下载锁定
-启动.bat                      普通启动
-settings.ini                  首次运行后生成（便携设置/计时，不入库）
-settings.example.ini          配置字段示例
-src/                          源码
-tests/SelfTest.cs             纯逻辑自检（不碰硬件）
-tests/run-tests.ps1           编译并运行自检
-assets/app.ico                图标（多尺寸）
-tools/make-icon.ps1           重新生成图标
-build.ps1                     编译脚本（Windows 自带 csc，不需要 SDK）
-docs/                         截图、验收口径、决策记录、回归清单
+src/                 源码（24 个 .cs）
+tests/               纯逻辑自检，不碰硬件
+tools/               打包、图标、诊断探针、界面截图等开发工具
+assets/app.ico       图标（多尺寸）
+build.ps1            编译脚本（Windows 自带 csc，不需要 SDK）
+settings.example.ini 配置字段示例
+README.md            本文
+CHANGELOG.md         更新记录
+LICENSE              许可
+docs/                截图、决策记录、回归清单、验收口径、发布步骤
+解除锁定并启动.bat    首次运行：解除下载锁定后启动
+以管理员身份运行.bat  结束旧实例并以管理员权限重启（修复托盘）
+
+bin/                 构建产物：WirelessBattery.exe 与中文名副本
+settings.ini         首次运行后生成（便携设置/计时，不入库）
 ```
 
 ## 编译与测试
@@ -232,6 +243,12 @@ powershell -ExecutionPolicy Bypass -File tests/run-tests.ps1              # 纯�
 需要 Windows 自带的 .NET Framework 4.x。`build.ps1` 会在 `bin/build-info.txt` 写下
 版本、构建时间、git commit 与 exe 的 SHA256，便于确认「手上这个 exe 是哪次构建」。
 
+打一个可直接上传到 Release 的 zip：
+
+```
+tools/pack.ps1        → dist/WirelessBattery-1.4.0.0-win64.zip
+```
+
 ## 隐私
 
 不联网、不上传数据、不写行为日志。仅在两种显式场景落文件：
@@ -241,6 +258,25 @@ powershell -ExecutionPolicy Bypass -File tests/run-tests.ps1              # 纯�
 
 `settings.ini` 含设备名与电量历史，属个人数据，不要随仓库提交（`.gitignore` 已排除）。
 
+## 截图
+
+| 设置 | 阶梯估算 |
+|---|---|
+| ![设置](docs/settings.png) | ![阶梯估算](docs/estimate-settings.png) |
+
+## 参与开发
+
+- 改动前先看 [docs/02-决策记录.md](docs/02-决策记录.md)（为什么这么设计）和
+  [docs/03-回归清单.md](docs/03-回归清单.md)（改完要验什么）。
+- 提 PR 前请保证 `build.ps1 -Strict` 零警告、`tests/run-tests.ps1` 全绿。
+- 设备兼容性反馈请附 `WirelessBattery.exe --once` 生成的 `scan.txt`（里面只有型号与读数，
+  不含设备名/路径/序列号），这比截图有用得多。
+
+## 许可
+
+[MIT](LICENSE) © 2026 xianzhige99
+
 ## 免责声明
 
 个人工具，与 MCHOSE（迈从）、XIBERIA（西伯利亚）、Logitech（罗技）无隶属或授权关系。
+商标归各自所有者。

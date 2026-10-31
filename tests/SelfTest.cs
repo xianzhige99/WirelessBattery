@@ -33,6 +33,7 @@ namespace WirelessBattery
             TestConfigRoundTrip();
             TestSafeDeviceId();
             TestEstimateBt();
+            TestLadderPause();
             TestGpwValidation();
             TestSanitizeName();
             TestK02BSJudge();
@@ -321,6 +322,39 @@ namespace WirelessBattery
             // 上报值跳档：锚点重置，已保持时间归零
             s.EstimateBt("K02BS", 60, out used, out next, out invalid, out reason, out projected);
             Near(used, 0, 0.001, "阶梯跳变后重新计时");
+        }
+
+        /// <summary>
+        /// 阶梯计时暂停/恢复：关机或未确认期间不应让「已保持」继续增长。
+        /// 锚点在 3 小时前、其中暂停了 2 小时 → 恢复后只应计入 1 小时。
+        /// </summary>
+        private static void TestLadderPause()
+        {
+            Console.WriteLine("[阶梯计时暂停]");
+            AppSettings s = new AppSettings();
+            const string key = "K02BS";
+            RuntimeState st = s.GetRuntime(key);
+            DateTime now = DateTime.UtcNow;
+            st.HasBtStage = true;
+            st.BtStage = 80;
+            st.BtStageUtc = now.AddHours(-3);
+            st.PausedUtc = now.AddHours(-2);
+
+            s.ResumeLadder(key);
+            double kept = (DateTime.UtcNow - st.BtStageUtc).TotalHours;
+            Check(Math.Abs(kept - 1.0) < 0.05, "暂停 2 小时不计入已保持（应剩 1 小时）",
+                "实际 " + kept.ToString("0.##", CultureInfo.InvariantCulture) + " 小时");
+            Check(st.PausedUtc == DateTime.MinValue, "恢复后清空暂停标记", "未清空");
+
+            s.PauseLadder(key);
+            DateTime first = st.PausedUtc;
+            s.PauseLadder(key);
+            Check(st.PausedUtc == first, "重复暂停不推迟暂停时刻（幂等）", "暂停时刻被改动");
+
+            s.ResumeLadder(key);
+            Check(st.PausedUtc == DateTime.MinValue, "再次恢复清空标记", "未清空");
+            s.ResumeLadder(key);
+            Check(st.PausedUtc == DateTime.MinValue, "未暂停时恢复是空操作", "状态被改动");
         }
 
         private static void TestGpwValidation()

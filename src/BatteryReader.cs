@@ -1128,6 +1128,13 @@ namespace WirelessBattery
             card.CanEstimate = true;
             card.EstimateEnabled = cfg.Enabled;
 
+            // 阶梯计时只在“确认蓝牙连着”时走：关机/未确认期间暂停，重连时把暂停时长补回去。
+            // 否则关机一夜后再开机，主数字会按墙钟白白掉几格（实测 11.7 小时掉 4%）。
+            if (state == K02BSLinkState.Dual || state == K02BSLinkState.Bluetooth)
+                Settings.ResumeLadder("K02BS");
+            else
+                Settings.PauseLadder("K02BS");
+
             // 只有接收器在线时是否算“已连接”，取决于用户的取舍（默认不算，见 K02BSLinkJudge）。
             bool physical = K02BSLinkJudge.CountsAsConnected(state, Settings.K02BSSoleDongleAsConnected);
             bool pending;

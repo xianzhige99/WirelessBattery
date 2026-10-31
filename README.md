@@ -266,7 +266,8 @@ tools/pack.ps1        → dist/WirelessBattery-1.4.0.0-win64.zip
 
 ## 参与开发
 
-- 改动前先看 [docs/02-决策记录.md](docs/02-决策记录.md)（为什么这么设计）和
+- 接手/换电脑先看 [docs/00-交接.md](docs/00-交接.md)；改动前看
+  [docs/02-决策记录.md](docs/02-决策记录.md)（为什么这么设计）和
   [docs/03-回归清单.md](docs/03-回归清单.md)（改完要验什么）。
 - 提 PR 前请保证 `build.ps1 -Strict` 零警告、`tests/run-tests.ps1` 全绿。
 - 设备兼容性反馈请附 `WirelessBattery.exe --once` 生成的 `scan.txt`（里面只有型号与读数，

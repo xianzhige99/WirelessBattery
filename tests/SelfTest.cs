@@ -37,6 +37,8 @@ namespace WirelessBattery
             TestGpwValidation();
             TestSanitizeName();
             TestK02BSJudge();
+            TestGpwDeviceKeys();
+            TestMachineSwitch();
 
             Console.WriteLine();
             Console.WriteLine("PASS " + _pass + "  FAIL " + _fail);
@@ -240,6 +242,7 @@ namespace WirelessBattery
 
                 AppSettings a = new AppSettings();
                 a.IntervalSeconds = 45;
+                a.MachineTag = "deadbeef";
                 a.CloseToTray = false;
                 a.AutoStartWanted = false;
                 a.SetDeviceEnabled("BT:TEST HEADSET", false);
@@ -271,6 +274,7 @@ namespace WirelessBattery
                 Check(b.Probes.TryGetValue("3837_100A", out pr) && pr.Protocol == ProtocolKind.MchoseFeature,
                     "协议路由缓存往返一致", "缓存丢失或协议不同");
                 Check(pr != null && pr.Firmware == 5173, "固件指纹往返一致", "指纹丢失");
+                Check(b.MachineTag == "deadbeef", "机器指纹往返一致", "实际为 " + b.MachineTag);
             }
             catch (Exception ex)
             {
@@ -320,6 +324,65 @@ namespace WirelessBattery
             // 上报值跳档：锚点重置，已保持时间归零
             s.EstimateBt("K02BS", 60, out used, out next, out invalid, out reason, out projected);
             Near(used, 0, 0.001, "阶梯跳变后重新计时");
+        }
+
+        /// <summary>GPW 型号级键的两种写法（冒号/下划线）都要认出来。</summary>
+        private static void TestGpwDeviceKeys()
+        {
+            Console.WriteLine("[GPW 设备键]");
+            Check(AppSettings.IsGpwDeviceKey("046D:C539"), "046D:C539（冒号）识别为 GPW", "被漏判");
+            Check(AppSettings.IsGpwDeviceKey("046D_C539"), "046D_C539（下划线）识别为 GPW", "被漏判");
+            Check(AppSettings.IsGpwDeviceKey("046d:4079"), "小写也能识别", "被漏判");
+            Check(AppSettings.IsGpwDeviceKey("046D:C088"), "有线键识别为 GPW", "被漏判");
+            Check(!AppSettings.IsGpwDeviceKey("046D:C232"), "键盘 C232 不算 GPW", "被误判");
+            Check(!AppSettings.IsGpwDeviceKey("K02BS"), "K02BS 不算 GPW", "被误判");
+            Check(!AppSettings.IsGpwDeviceKey(""), "空键不算 GPW", "被误判");
+        }
+
+        /// <summary>
+        /// 换电脑：settings.ini 拷到另一台机器后，不能把上一台机器的“最近见到”当成本机的，
+        /// 否则会冒出一张永远“未连接”的设备卡。勾选状态必须保留。
+        /// </summary>
+        private static void TestMachineSwitch()
+        {
+            Console.WriteLine("[换机器]");
+            string path = Path.Combine(Application.StartupPath, "settings.ini");
+            string backup = path + ".selftest.bak";
+            bool hadFile = File.Exists(path);
+            try
+            {
+                if (hadFile) File.Copy(path, backup, true);
+
+                AppSettings a = new AppSettings();
+                a.MachineTag = "deadbeef";
+                a.NoteSeen("MCHOSE");
+                a.NoteSeen("K02BS");
+                a.SetDeviceEnabled("MCHOSE", false);
+                ConfigStore.Save(path, a);
+
+                AppSettings b = AppSettings.Load();
+                Check(b.GetLastSeenUtc("MCHOSE") == DateTime.MinValue,
+                    "换机器后 GetLastSeenUtc 为空（占位卡的守卫条件）", "仍能取到旧时间");
+                Check(b.DeviceLastSeen.Count == 0, "换机器后清空「最近见到」，不再复现别机的设备卡",
+                    "仍残留 " + b.DeviceLastSeen.Count + " 条");
+                Check(b.MachineTag == AppSettings.CurrentMachineTag(), "指纹改写为本机", "指纹未更新");
+                Check(!b.IsDeviceEnabled("MCHOSE"), "勾选状态不受影响（仍为取消）", "勾选状态被重置");
+                Check(b.IntervalSeconds == 60 || b.IntervalSeconds > 0, "其余配置保留", "配置丢失");
+            }
+            catch (Exception ex)
+            {
+                Check(false, "换机器处理不抛异常", ex.Message);
+            }
+            finally
+            {
+                try
+                {
+                    if (hadFile) File.Copy(backup, path, true);
+                    else if (File.Exists(path)) File.Delete(path);
+                    if (File.Exists(backup)) File.Delete(backup);
+                }
+                catch { }
+            }
         }
 
         /// <summary>

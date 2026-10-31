@@ -19,6 +19,8 @@ namespace WirelessBattery
         internal const string GlobalInterval = "Interval";
         internal const string GlobalCloseToTray = "CloseToTray";
         internal const string GlobalAutoStartWanted = "AutoStartWanted";
+        // 写入这份配置的机器指纹（短哈希）。换机器时用它清掉“别人的最近见到”。
+        internal const string GlobalMachine = "Machine";
 
         // ---- 分段前缀 ----
         private const string DevicePrefix = "Device.";
@@ -178,6 +180,11 @@ namespace WirelessBattery
             if (key.Equals(GlobalAutoStartWanted, StringComparison.OrdinalIgnoreCase))
             {
                 s.AutoStartWanted = val == "1" || val.Equals("true", StringComparison.OrdinalIgnoreCase);
+                return;
+            }
+            if (key.Equals(GlobalMachine, StringComparison.OrdinalIgnoreCase))
+            {
+                s.MachineTag = val == null ? "" : val.Trim();
                 return;
             }
             // 兼容 1.2 的旧键，读取但不再使用。
@@ -527,6 +534,7 @@ namespace WirelessBattery
             lines.Add(GlobalInterval + "=" + s.IntervalSeconds.ToString(inv));
             lines.Add(GlobalCloseToTray + "=" + (s.CloseToTray ? "1" : "0"));
             lines.Add(GlobalAutoStartWanted + "=" + (s.AutoStartWanted ? "1" : "0"));
+            if (!string.IsNullOrEmpty(s.MachineTag)) lines.Add(GlobalMachine + "=" + s.MachineTag);
             List<string> deviceKeys = s.GetDeviceKeys();
             for (int i = 0; i < deviceKeys.Count; i++)
             {

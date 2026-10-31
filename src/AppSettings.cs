@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Security;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
@@ -148,6 +149,9 @@ namespace WirelessBattery
         public Dictionary<string, DateTime> DeviceLastSeen = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         // 自定义显示名（为空即用识别到的默认名；只影响显示，不参与设备识别）。
         public Dictionary<string, string> DeviceNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // 本机指纹：settings.ini 是便携的，可能被拷到另一台电脑。
+        // 记下写入时的机器；换机器后发现 LastSeen 是“别人的”，就清掉，避免冒出不属于本机的设备卡。
+        public string MachineTag = "";
         // GPW 电压校准参数（全局一份：锚点是电池化学层面的量，不跟具体个体走）。
         public GpwConfig Gpw = new GpwConfig();
 
@@ -217,6 +221,8 @@ namespace WirelessBattery
             string gpwReason;
             if (!IsValidGpw(s.Gpw, out gpwReason)) s.Gpw = new GpwConfig();
 
+            s.EnsureMachineTag();
+
             s.AutoStart = s.IsAutoStartEnabled();
             if (s.AutoStartWanted && IsFinalExeName())
             {
@@ -279,6 +285,40 @@ namespace WirelessBattery
             DateTime seen;
             if (!string.IsNullOrEmpty(deviceKey) && DeviceLastSeen.TryGetValue(deviceKey, out seen)) return seen;
             return DateTime.MinValue;
+        }
+
+        /// <summary>本机指纹：取机器名的短哈希，不把明文机器名写进配置文件。</summary>
+        public static string CurrentMachineTag()
+        {
+            try
+            {
+                using (SHA1 sha = SHA1.Create())
+                {
+                    byte[] h = sha.ComputeHash(Encoding.UTF8.GetBytes(Environment.MachineName ?? ""));
+                    StringBuilder sb = new StringBuilder(8);
+                    for (int i = 0; i < 4; i++) sb.Append(h[i].ToString("x2"));
+                    return sb.ToString();
+                }
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// settings.ini 是便携的，可能被拷到另一台电脑。发现指纹不符时清空“最近见到”，
+        /// 免得本机冒出一堆只存在于另一台电脑上的设备卡（勾选状态与阶梯参数保留）。
+        /// 只有真的清掉了东西才立刻写盘，全新机器上不会平白多一次写。
+        /// </summary>
+        private void EnsureMachineTag()
+        {
+            string tag = CurrentMachineTag();
+            if (tag.Length == 0) return;
+            if (string.Equals(MachineTag, tag, StringComparison.OrdinalIgnoreCase)) return;
+
+            bool hadSeen = DeviceLastSeen.Count > 0;
+            DeviceLastSeen.Clear();
+            MachineTag = tag;
+            SaveDeferred();
+            if (hadSeen) Flush();
         }
 
         private int OrderOf(string deviceKey)
@@ -894,9 +934,10 @@ namespace WirelessBattery
         public static bool IsGpwDeviceKey(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
-            return string.Equals(key, "046D_C539", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(key, "046D_4079", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(key, "046D_C088", StringComparison.OrdinalIgnoreCase);
+            // 配置里两种写法都存在过：DeviceKeyFor 用冒号（046D:C539），
+            // 早期注释与部分代码用下划线（046D_C539）。统一后再比较，否则缓存卡会丢掉“电压设置”入口。
+            string k = key.Trim().Replace('_', ':').ToUpperInvariant();
+            return k == "046D:C539" || k == "046D:4079" || k == "046D:C088";
         }
 
         /// <summary>

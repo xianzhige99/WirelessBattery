@@ -431,7 +431,10 @@ namespace WirelessBattery
                     if (existing >= 0) result.Cards.RemoveAt(existing);
                     continue;
                 }
-                if (existing < 0) result.Cards.Add(Settings.CreatePlaceholderCard(key));
+                // 只给“本机真的见过”的型号出占位卡。否则把 settings.ini 拷到另一台电脑后，
+                // 会凭空多出一张永远“未连接”的卡片（换机器时 LastSeen 已在 AppSettings 里清空）。
+                if (existing < 0 && Settings.GetLastSeenUtc(key) != DateTime.MinValue)
+                    result.Cards.Add(Settings.CreatePlaceholderCard(key));
             }
 
             // 只有“第一次发现新型号”时才落盘一次，正常刷新不写 settings.ini。
@@ -869,14 +872,17 @@ namespace WirelessBattery
                 card.Charging = charging;
                 if (charging)
                 {
+                    // 充电时不再把主数字换成“充电中”：用户更想知道充到多少了。
+                    // 充电期间不做换算（表面电荷会让读数虚高），所以沿用上一次的估算值。
                     bool had = st != null && st.Displayed >= 0;
                     card.HasLevel = had;
                     card.Level = had ? (int?)st.Displayed : null;
-                    card.LevelText = "充电中";
+                    card.LevelText = had ? st.Displayed + "%" : "—";
+                    card.IsError = false;
                     card.StatusText = "充电中";
-                    card.StatusLine = "HID++ 电压特征 · 外部供电，暂停换算";
-                    card.EstimateHint = string.Format("充电中 · 电压 {0:0} mV", r.VoltageMv);
-                    card.Accent = card.ThemeColor;
+                    card.StatusLine = string.Format("HID++ 电压特征 · {0:0} mV · 外部供电，暂停换算", r.VoltageMv);
+                    card.EstimateHint = had ? "充电中 · 显示上次估算值" : "充电中 · 拔线后才有百分比";
+                    card.Accent = had && st.Displayed < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor;
                 }
                 else if (anomaly)
                 {
@@ -895,14 +901,16 @@ namespace WirelessBattery
                     card.HasLevel = true;
                     card.Level = shown;
                     card.LevelText = shown + "%";
-                    card.StatusText = "电压估算";
+                    card.IsError = false;
+                    card.StatusText = "已连接";
                     card.StatusLine = string.Format("HID++ 电压特征 · {0:0} mV · 平滑 {1:0} mV", r.VoltageMv, smoothed);
                     card.Accent = shown < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor;
+                    // 卡面上只留“电压”，校准建议只在真的可调时才提示一次；
+                    // 观测最高/样本数这类诊断信息留给「电压设置」窗口。
                     int suggest = GpwBattery.SuggestFullMv(cfg);
-                    if (suggest > 0)
-                        card.EstimateHint = string.Format("观测最高 {0:0} mV · 可把满电锚点调到 {1} mV", cfg.ObservedMaxMv, suggest);
-                    else
-                        card.EstimateHint = string.Format("观测最高 {0:0} mV · 样本 {1}", cfg.ObservedMaxMv, cfg.Samples);
+                    card.EstimateHint = suggest > 0
+                        ? string.Format("电压 {0:0} mV · 锚点可调到 {1} mV", r.VoltageMv, suggest)
+                        : string.Format("电压 {0:0} mV", r.VoltageMv);
                     if (!string.IsNullOrEmpty(card.DeviceKey)) Settings.SetLastLevel(card.DeviceKey, shown);
                 }
                 card.Detail = detail + (string.IsNullOrEmpty(r.Detail) ? "" : " · " + r.Detail);

@@ -7,6 +7,14 @@ using System.Windows.Forms;
 
 namespace WirelessBattery
 {
+    /// <summary>
+    /// 阶梯电量估算设置。
+    ///
+    /// 布局用一张 4 列网格贯穿整页，保证所有内容竖着对齐：
+    ///   第 0 列 标签（区间/项目名）    第 1 列 输入框
+    ///   第 2 列 占比（右对齐）          第 3 列 预估时长（右对齐，单位放表头）
+    /// 「满电使用时间」的输入框与五行权重框同列同宽；占比与时长都是纯数字右对齐，便于逐行比较。
+    /// </summary>
     public class EstimateSettingsForm : Form
     {
         private readonly AppSettings _settings;
@@ -22,8 +30,12 @@ namespace WirelessBattery
         private Label _weightSummary;
         private int? _currentLevel;
 
-        /// <summary>五个固定区间，与 EstimateConfig.Weights 一一对应。</summary>
         private static readonly string[] RangeText = new string[] { "100% → 80%", "80% → 60%", "60% → 40%", "40% → 20%", "20% → 0%" };
+
+        // 列宽固定，整页共用
+        private const int ColLabel = 150;
+        private const int ColInput = 96;
+        private const int ColShare = 74;
 
         public EstimateSettingsForm(AppSettings settings, string key, string title, Action onSaved)
         {
@@ -31,7 +43,7 @@ namespace WirelessBattery
             _key = key;
             _onSaved = onSaved;
             Text = "阶梯电量估算 · " + title;
-            ClientSize = new Size(540, 660);
+            ClientSize = new Size(560, 606);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -47,30 +59,36 @@ namespace WirelessBattery
 
             TableLayoutPanel table = new TableLayoutPanel();
             table.Dock = DockStyle.Fill;
-            table.Padding = new Padding(22, 14, 22, 8);
-            table.ColumnCount = 2;
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
-            table.RowCount = 9;
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 44f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 90f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 24f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 176f));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
-            table.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            table.Padding = new Padding(22, 14, 22, 6);
+            table.ColumnCount = 4;
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ColLabel));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ColInput));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ColShare));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            table.RowCount = 14;
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));   // 0 启用
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42f));   // 1 满电时间
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));   // 2 阶梯标签
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 62f));   // 3 阶梯输入
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));   // 4 当前上报
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));   // 5 权重标题
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 22f));   // 6 表头
+            for (int i = 0; i < 5; i++)
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30f));   // 7..11 五行
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 50f));   // 12 汇总
+            table.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));   // 13 说明
             Controls.Add(table);
 
             _enabled = new CheckBox();
             _enabled.Text = "启用阶梯电量估算（主数字显示推算电量）";
             _enabled.Checked = cfg.Enabled;
             _enabled.Dock = DockStyle.Fill;
+            _enabled.Margin = new Padding(0, 2, 0, 2);
             table.Controls.Add(_enabled, 0, 0);
-            table.SetColumnSpan(_enabled, 2);
+            table.SetColumnSpan(_enabled, 4);
 
-            table.Controls.Add(RowLabel("满电使用时间（小时）"), 0, 1);
+            // 与五行权重框同列同宽，竖着对齐
+            table.Controls.Add(FieldLabel("满电使用时间"), 0, 1);
             _hours = new NumericUpDown();
             _hours.Minimum = 1;
             _hours.Maximum = 2000;
@@ -78,110 +96,69 @@ namespace WirelessBattery
             _hours.Increment = 1;
             _hours.Value = (decimal)Math.Max(1.0, Math.Min(2000.0, cfg.FullHours));
             _hours.Dock = DockStyle.Fill;
-            _hours.Margin = new Padding(3, 6, 3, 4);
+            _hours.Margin = new Padding(0, 5, 0, 5);
+            _hours.TextAlign = HorizontalAlignment.Right;
+            _hours.Font = new Font("Consolas", 9.5f);
             _hours.ValueChanged += delegate { RefreshWeights(); };
             table.Controls.Add(_hours, 1, 1);
+            Label hourUnit = UnitLabel("小时");
+            table.Controls.Add(hourUnit, 2, 1);
+            table.SetColumnSpan(hourUnit, 2);
 
-            Label stageLabel = RowLabel("阶梯数值（从高到低，逗号分隔）");
+            Label stageLabel = FieldLabel("阶梯数值（从高到低，逗号分隔）");
             table.Controls.Add(stageLabel, 0, 2);
-            table.SetColumnSpan(stageLabel, 2);
+            table.SetColumnSpan(stageLabel, 4);
 
             _stages = new TextBox();
             _stages.Text = JoinStages(cfg.Stages);
             _stages.Multiline = true;
             _stages.ScrollBars = ScrollBars.Vertical;
             _stages.Dock = DockStyle.Fill;
-            _stages.Margin = new Padding(3, 4, 3, 4);
+            _stages.Margin = new Padding(0, 2, 0, 4);
             _stages.Font = new Font("Consolas", 10f);
             _stages.TextChanged += delegate { RefreshCurrent(); };
             table.Controls.Add(_stages, 0, 3);
-            table.SetColumnSpan(_stages, 2);
+            table.SetColumnSpan(_stages, 4);
 
             _current = new Label();
             _current.AutoSize = false;
-            _current.Height = 24;
             _current.Dock = DockStyle.Fill;
+            _current.TextAlign = ContentAlignment.MiddleLeft;
             _current.Font = Ui.Font(8.5f, FontStyle.Regular);
-            _current.Margin = new Padding(4, 2, 4, 0);
+            _current.Margin = new Padding(0, 0, 0, 4);
             table.Controls.Add(_current, 0, 4);
-            table.SetColumnSpan(_current, 2);
+            table.SetColumnSpan(_current, 4);
 
-            Label weightLabel = RowLabel("各区间权重（相对值）");
-            weightLabel.ForeColor = Ui.Text;
-            table.Controls.Add(weightLabel, 0, 5);
-            table.SetColumnSpan(weightLabel, 2);
+            Label weightTitle = FieldLabel("各区间权重（相对值）");
+            weightTitle.ForeColor = Ui.Text;
+            weightTitle.Font = Ui.Font(9f, FontStyle.Bold);
+            table.Controls.Add(weightTitle, 0, 5);
+            table.SetColumnSpan(weightTitle, 4);
 
-            Control weightGrid = BuildWeightGrid(cfg);
-            table.Controls.Add(weightGrid, 0, 6);
-            table.SetColumnSpan(weightGrid, 2);
-
-            _weightSummary = new Label();
-            _weightSummary.AutoSize = false;
-            _weightSummary.Dock = DockStyle.Fill;
-            _weightSummary.Margin = new Padding(4, 4, 4, 2);
-            _weightSummary.Font = Ui.Font(8.4f, FontStyle.Regular);
-            _weightSummary.ForeColor = Ui.Muted;
-            table.Controls.Add(_weightSummary, 0, 7);
-            table.SetColumnSpan(_weightSummary, 2);
-
-            Label hint = new Label();
-            hint.Text = "规则：蓝牙上报值必须正好等于上面某个阶梯，否则设备卡片会提示“阶梯估算设置有误”。\n" +
-                "占比 = 该区间权重 ÷ 五项之和；每段时长 = 占比 × 满电使用时间，五项加起来正好等于满电时间。\n" +
-                "主数字按这些时长向下一档推算，最低到下一档；上报新阶梯后重新计时，只改权重不会重置已保持时间。";
-            hint.Dock = DockStyle.Fill;
-            hint.ForeColor = Ui.Muted;
-            hint.Font = Ui.Font(8.2f, FontStyle.Regular);
-            hint.Margin = new Padding(4, 4, 4, 0);
-            table.Controls.Add(hint, 0, 8);
-            table.SetColumnSpan(hint, 2);
-
-            RefreshCurrent();
-            RefreshWeights();
-
-            Controls.Add(BuildBottomBar());
-        }
-
-        /// <summary>
-        /// 权重区：表头 + 五行，每行「区间 / 权重输入 / 占比 / 预估时长」各占一格。
-        /// 原来五个输入框挤在同一行（约 540px 超出 456px 可用宽度），会互相压住看不见。
-        /// </summary>
-        private Control BuildWeightGrid(EstimateConfig cfg)
-        {
-            TableLayoutPanel grid = new TableLayoutPanel();
-            grid.Dock = DockStyle.Fill;
-            grid.Margin = new Padding(3, 0, 3, 0);
-            grid.ColumnCount = 4;
-            grid.RowCount = 6;
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104f));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84f));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76f));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 20f));
-            for (int r = 1; r <= 5; r++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30f));
-
-            grid.Controls.Add(HeaderLabel("区间"), 0, 0);
-            grid.Controls.Add(HeaderLabel("权重"), 1, 0);
-            grid.Controls.Add(HeaderLabel("占比"), 2, 0);
-            grid.Controls.Add(HeaderLabel("预估时长"), 3, 0);
+            table.Controls.Add(HeaderLabel("区间", ContentAlignment.BottomLeft, Padding.Empty), 0, 6);
+            table.Controls.Add(HeaderLabel("权重", ContentAlignment.BottomLeft, Padding.Empty), 1, 6);
+            table.Controls.Add(HeaderLabel("占比", ContentAlignment.BottomRight, Padding.Empty), 2, 6);
+            table.Controls.Add(HeaderLabel("预估时长（小时）", ContentAlignment.BottomRight, new Padding(0, 0, 6, 0)), 3, 6);
 
             List<double> startWeights = cfg.Weights;
             string startReason;
             if (!AppSettings.IsValidWeights(startWeights, out startReason)) startWeights = EstimateConfig.DefaultWeights();
-
             _weights = new NumericUpDown[5];
             _shareLabels = new Label[5];
             _hourLabels = new Label[5];
 
             for (int i = 0; i < 5; i++)
             {
+                int row = 7 + i;
+
                 Label range = new Label();
                 range.Text = RangeText[i];
                 range.TextAlign = ContentAlignment.MiddleLeft;
                 range.Dock = DockStyle.Fill;
-                range.Margin = new Padding(2, 0, 2, 0);
+                range.Margin = new Padding(0);
                 range.ForeColor = Ui.Text;
                 range.Font = Ui.Font(9f, FontStyle.Regular);
-                grid.Controls.Add(range, 0, i + 1);
+                table.Controls.Add(range, 0, row);
 
                 NumericUpDown box = new NumericUpDown();
                 box.Minimum = 0.01m;
@@ -190,41 +167,88 @@ namespace WirelessBattery
                 box.Increment = 1m;
                 box.Value = (decimal)Math.Max(0.01, Math.Min(10000.0, startWeights[i]));
                 box.Dock = DockStyle.Fill;
-                box.Margin = new Padding(2, 3, 2, 3);
+                box.Margin = new Padding(0, 3, 0, 3);
                 box.TextAlign = HorizontalAlignment.Right;
                 box.Font = new Font("Consolas", 9.5f);
                 box.ValueChanged += delegate { RefreshWeights(); };
                 _weights[i] = box;
-                grid.Controls.Add(box, 1, i + 1);
+                table.Controls.Add(box, 1, row);
 
                 Label share = new Label();
                 share.TextAlign = ContentAlignment.MiddleRight;
                 share.Dock = DockStyle.Fill;
-                share.Margin = new Padding(2, 0, 6, 0);
+                share.Margin = new Padding(0);
                 share.ForeColor = Ui.Text;
                 share.Font = new Font("Consolas", 9.5f);
                 _shareLabels[i] = share;
-                grid.Controls.Add(share, 2, i + 1);
+                table.Controls.Add(share, 2, row);
 
                 Label hours = new Label();
-                hours.TextAlign = ContentAlignment.MiddleLeft;
+                hours.TextAlign = ContentAlignment.MiddleRight;
                 hours.Dock = DockStyle.Fill;
-                hours.Margin = new Padding(6, 0, 2, 0);
+                hours.Margin = new Padding(0, 0, 6, 0);
                 hours.ForeColor = Ui.Muted;
-                hours.Font = Ui.Font(8.8f, FontStyle.Regular);
+                hours.Font = new Font("Consolas", 9.5f);
                 _hourLabels[i] = hours;
-                grid.Controls.Add(hours, 3, i + 1);
+                table.Controls.Add(hours, 3, row);
             }
-            return grid;
+
+            _weightSummary = new Label();
+            _weightSummary.AutoSize = false;
+            _weightSummary.Dock = DockStyle.Fill;
+            _weightSummary.TextAlign = ContentAlignment.TopLeft;
+            _weightSummary.Margin = new Padding(0, 6, 0, 0);
+            _weightSummary.Font = Ui.Font(8.4f, FontStyle.Regular);
+            _weightSummary.ForeColor = Ui.Muted;
+            table.Controls.Add(_weightSummary, 0, 12);
+            table.SetColumnSpan(_weightSummary, 4);
+
+            Label hint = new Label();
+            hint.Text = "规则：蓝牙上报值必须正好等于上面某个阶梯，否则设备卡片会提示“阶梯估算设置有误”。\n" +
+                "占比 = 该区间权重 ÷ 五项之和；每段时长 = 占比 × 满电使用时间，五项加起来正好等于满电时间。\n" +
+                "主数字按这些时长向下一档推算，最低到下一档；上报新阶梯后重新计时，只改权重不会重置已保持时间。";
+            hint.Dock = DockStyle.Fill;
+            hint.ForeColor = Ui.Muted;
+            hint.Font = Ui.Font(8.2f, FontStyle.Regular);
+            hint.Margin = new Padding(0, 6, 0, 0);
+            table.Controls.Add(hint, 0, 13);
+            table.SetColumnSpan(hint, 4);
+
+            RefreshCurrent();
+            RefreshWeights();
+
+            Controls.Add(BuildBottomBar());
         }
 
-        private static Label HeaderLabel(string text)
+        private static Label FieldLabel(string text)
         {
             Label l = new Label();
             l.Text = text;
-            l.TextAlign = ContentAlignment.BottomLeft;
+            l.TextAlign = ContentAlignment.MiddleLeft;
             l.Dock = DockStyle.Fill;
-            l.Margin = new Padding(2, 0, 2, 2);
+            l.Margin = new Padding(0);
+            return l;
+        }
+
+        private static Label UnitLabel(string text)
+        {
+            Label l = new Label();
+            l.Text = text;
+            l.TextAlign = ContentAlignment.MiddleLeft;
+            l.Dock = DockStyle.Fill;
+            l.Margin = new Padding(2, 0, 0, 0);
+            l.ForeColor = Ui.Muted;
+            l.Font = Ui.Font(8.6f, FontStyle.Regular);
+            return l;
+        }
+
+        private static Label HeaderLabel(string text, ContentAlignment align, Padding margin)
+        {
+            Label l = new Label();
+            l.Text = text;
+            l.TextAlign = align;
+            l.Dock = DockStyle.Fill;
+            l.Margin = margin;
             l.ForeColor = Ui.Muted;
             l.Font = Ui.Font(8.4f, FontStyle.Regular);
             return l;
@@ -289,15 +313,6 @@ namespace WirelessBattery
                 save.Left = bottom.Width - 100;
             };
             return bottom;
-        }
-
-        private static Label RowLabel(string text)
-        {
-            Label l = new Label();
-            l.Text = text;
-            l.TextAlign = ContentAlignment.MiddleLeft;
-            l.Dock = DockStyle.Fill;
-            return l;
         }
 
         private static string JoinStages(List<int> stages)
@@ -427,7 +442,7 @@ namespace WirelessBattery
             for (int i = 0; i < 5; i++)
             {
                 _shareLabels[i].Text = Percent(shares[i] * 100);
-                _hourLabels[i].Text = hours[i].ToString("0.#", CultureInfo.InvariantCulture) + " 小时";
+                _hourLabels[i].Text = hours[i].ToString("0.#", CultureInfo.InvariantCulture);
                 if (i > 0) { sbShare.Append(" · "); sbHour.Append(" · "); }
                 sbShare.Append(Percent(shares[i] * 100));
                 sbHour.Append(hours[i].ToString("0.#", CultureInfo.InvariantCulture));
@@ -435,7 +450,7 @@ namespace WirelessBattery
             }
 
             _weightSummary.Text =
-                "五项之和 = " + sum.ToString("0.###", CultureInfo.InvariantCulture) + "　→　占比 " + sbShare.ToString() + "\n"
+                "五项之和 " + sum.ToString("0.###", CultureInfo.InvariantCulture) + "　→　占比 " + sbShare.ToString() + "\n"
                 + "满电 " + fullHours.ToString("0.#", CultureInfo.InvariantCulture) + " 小时　→　" + sbHour.ToString()
                 + " 小时（合计 " + total.ToString("0.#", CultureInfo.InvariantCulture) + " 小时）";
             _weightSummary.ForeColor = Ui.Muted;

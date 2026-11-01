@@ -44,6 +44,8 @@ foreach ($f in $files) {
 $zip = Join-Path $dist ('WirelessBattery-' + $ver + '-win64.zip')
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+# 暂存目录只是打包中转，打完就清掉，避免 dist 里留一个同名空目录
+Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ("Pack OK: " + $zip)
 Write-Host ("  version " + $ver + "  size " + [math]::Round((Get-Item $zip).Length / 1KB) + " KB")

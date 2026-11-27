@@ -29,7 +29,10 @@ if ($Version) {
 }
 
 if ($Clean) {
-    Get-ChildItem (Join-Path $bin '*.exe') -ErrorAction SilentlyContinue | Remove-Item -Force
+    # do not pipe into Remove-Item: some environments wrap it and pipeline binding fails
+    foreach ($f in @(Get-ChildItem (Join-Path $bin '*.exe') -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $sources = Get-ChildItem (Join-Path $root 'src\*.cs') | ForEach-Object { $_.FullName }

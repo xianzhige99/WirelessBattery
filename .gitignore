@@ -1,5 +1,6 @@
 # 构建产物（由 build.ps1 / tools/pack.ps1 生成，不入库）
 bin/
+output/
 dist/
 build-info.txt
 *.zip
@@ -17,3 +18,6 @@ crash.txt
 Thumbs.db
 desktop.ini
 .workbuddy/
+
+# 临时目录（任务中间产物，不入库）
+tmp/

@@ -43,6 +43,8 @@ namespace WirelessBattery
         // 电压特征命中：只保留原始毫伏，换算不在本模块做。
         public bool HasVoltage;
         public int VoltageMv;
+        /// <summary>HID++ 报告的设备 PID（0x0003 modelId）；-1 表示没读到。用于选设备级电池曲线。</summary>
+        public int ModelId = -1;
 
         public static BatteryResult Success(int level, bool? charging, string source, string detail, string raw)
         {
@@ -106,6 +108,8 @@ namespace WirelessBattery
         public bool RouteUnsupported;
         // 罗技（HID++ 电压路径）设备：卡片上提供“电压设置”入口。
         public bool CanGpwSetup;
+        // 命中设备级曲线（G HUB 同源）：锚点/自动校准不参与换算，设置窗口据此精简。
+        public bool UsesDeviceCurve;
     }
 
     public class ScanResult
@@ -139,6 +143,8 @@ namespace WirelessBattery
         private int _linkFeatureIndex;
         private DateTime _linkLastTrafficUtc = DateTime.MinValue;
         private int _linkPassiveMv;
+        private bool? _linkPassiveCharging;
+        private bool? _linkPassiveChargingLogged;
         private DateTime _linkPassiveUtc = DateTime.MinValue;
         private Thread _linkThread;
         private volatile bool _linkStop;
@@ -167,15 +173,24 @@ namespace WirelessBattery
         /// </summary>
         public bool TryGetPassiveVoltage(out int mv)
         {
+            bool? charging;
+            return TryGetPassiveVoltage(out mv, out charging);
+        }
+
+        /// <summary>设备主动推来的电压；同时带出帧里的充电标志（取不到则为 null）。</summary>
+        public bool TryGetPassiveVoltage(out int mv, out bool? charging)
+        {
             lock (_linkSync)
             {
                 if (_linkPassiveMv > 0 && (DateTime.UtcNow - _linkPassiveUtc).TotalSeconds <= 90.0)
                 {
                     mv = _linkPassiveMv;
+                    charging = _linkPassiveCharging;
                     return true;
                 }
             }
             mv = 0;
+            charging = null;
             return false;
         }
 
@@ -231,6 +246,7 @@ namespace WirelessBattery
                 if (frames.Count == 0) continue;
 
                 DateTime now = DateTime.UtcNow;
+                string flagLog = null;
                 lock (_linkSync)
                 {
                     _linkLastTrafficUtc = now;
@@ -242,10 +258,22 @@ namespace WirelessBattery
                         if (featureIndex <= 0 || f[2] != featureIndex || f[3] != 0x02) continue;
                         int mv = (f[4] << 8) + f[5];
                         if (mv < 1000 || mv > 6000) continue;
+                        bool? chg = f.Length >= 7 ? (bool?)((f[6] & 0x80) != 0) : null;
                         _linkPassiveMv = mv;
+                        _linkPassiveCharging = chg;
                         _linkPassiveUtc = now;
+                        // 只在充电状态翻转时记一行，便于排查“插着电却显示放电”的情况。
+                        if (chg != _linkPassiveChargingLogged)
+                        {
+                            _linkPassiveChargingLogged = chg;
+                            flagLog = string.Format("设备推送电压帧 {0} mV，状态位 0x{1:X2}，判定 {2}",
+                                mv, f.Length > 6 ? f[6] : 0,
+                                chg.HasValue ? (chg.Value ? "充电中" : "放电中") : "未知");
+                        }
                     }
                 }
+
+                if (flagLog != null) WriteLog(flagLog);
             }
         }
 
@@ -742,11 +770,23 @@ namespace WirelessBattery
 
             // 设备自己推来的电压（0x1001 通知）优先：命中时本轮一个请求都不发。
             int passiveMv;
-            if (TryGetPassiveVoltage(out passiveMv))
+            bool? passiveCharging;
+            if (TryGetPassiveVoltage(out passiveMv, out passiveCharging))
             {
                 BatteryResult pushed = BatteryResult.Fail("罗技 HID++ 2.0（设备推送）", "设备主动上报电压，本轮未发请求", "");
                 pushed.HasVoltage = true;
                 pushed.VoltageMv = passiveMv;
+                // 充电标志来自帧里的状态位：缺了它就只能在放电口径下换算，插着电会算出错值。
+                pushed.Charging = passiveCharging;
+                // 被动帧里没有 PID：优先用本会话已读到的；一次都没有过时补读一次，
+                // 否则充电期间全靠推送、永远读不到 PID，会一直退回通用曲线。
+                int modelId = _router.GetCachedModelId(modelKey);
+                if (modelId <= 0)
+                {
+                    int idx = rec != null && rec.DeviceIndex > 0 ? rec.DeviceIndex : _router.GetCachedDeviceIndex(modelKey);
+                    if (idx > 0 && idx <= 6) modelId = ResolveModelId(g, idx, modelKey);
+                }
+                pushed.ModelId = modelId;
                 _router.NoteHealthy(modelKey);
                 return pushed;
             }
@@ -776,6 +816,8 @@ namespace WirelessBattery
                 LogitechReader.Outcome cached = LogitechReader.ReadFeature(g, deviceIndex, featureId, WriteLog);
                 if (cached != null && cached.Result != null && (cached.Result.Ok || cached.Result.HasVoltage))
                 {
+                    // 放在读电池成功之后：设备刚应答过，说明醒着，问 PID 不会额外吃一个超时。
+                    cached.Result.ModelId = ResolveModelId(g, deviceIndex, modelKey);
                     _router.NoteHealthy(modelKey);
                     if (cached.Result.HasVoltage)
                     {
@@ -806,6 +848,7 @@ namespace WirelessBattery
 
             if (outcome.Result.Ok || outcome.Result.HasVoltage)
             {
+                outcome.Result.ModelId = ResolveModelId(g, outcome.DeviceIndex, modelKey);
                 _router.SetCachedDeviceIndex(modelKey, outcome.DeviceIndex);
                 _router.ResetNoBatteryStrike(modelKey);
                 _router.RecordSuccess(modelKey, outcome.Protocol, outcome.Kind, outcome.FeatureId, firmware, outcome.DeviceIndex);
@@ -836,15 +879,34 @@ namespace WirelessBattery
             return outcome.Result;
         }
 
+        /// <summary>
+        /// 取设备 PID：优先用本会话已读到的，其次现读一次（每个会话每型号只读一次）。
+        /// 0xFF 是接收器自身，读到的不是鼠标的 PID，直接跳过。
+        /// </summary>
+        private int ResolveModelId(HidGroup g, int deviceIndex, string modelKey)
+        {
+            int modelId = _router.GetCachedModelId(modelKey);
+            if (modelId > 0) return modelId;
+            if (deviceIndex <= 0 || deviceIndex > 6) return -1;
+            modelId = LogitechReader.ReadModelId(g, (byte)deviceIndex, WriteLog);
+            if (modelId > 0)
+            {
+                _router.SetCachedModelId(modelKey, modelId);
+                WriteLog("罗技 " + modelKey + " 设备 PID = 0x" + modelId.ToString("X4"));
+            }
+            return modelId;
+        }
+
         private void ApplyMeasured(DeviceCardModel card, BatteryResult r, string mode, string detail)
         {
             card.Source = r.Source;
             card.Raw = r.Raw;
             card.Mode = mode;
+            card.UsesDeviceCurve = false;
             if (r != null && r.HasVoltage && !r.Level.HasValue)
             {
                 // 电压特征（0x1001）：换算成百分比，再走“已连接 + 有电量”的统一显示。
-                // 外部供电有效时跳过映射，主数字直接写“充电中”，避免插线瞬间数字跳变。
+                // 充电时不再冻结数字：有设备模型就按 G HUB 的充电模型推进（见 GpwBattery.ChargeStep）。
                 bool pendingVolt = false;
                 if (!string.IsNullOrEmpty(card.DeviceKey))
                     Settings.UpdateLinkState(card.DeviceKey, true, out pendingVolt);
@@ -852,36 +914,49 @@ namespace WirelessBattery
                 card.LinkPending = false;
                 card.CanGpwSetup = true;
 
+                // 设备级曲线（G HUB 同源）：读到 PID 就用它标定的曲线，否则沿用通用锂电曲线。
+                LogitechBatteryModel model = LogitechBatteryModel.For(r.ModelId);
+
                 GpwConfig cfg = Settings.GetGpwConfig();
                 string stateKey = string.IsNullOrEmpty(card.DeviceKey) ? "GPW" : card.DeviceKey;
                 GpwFilterState st = GetGpwState(stateKey);
                 bool charging;
                 bool anomaly;
+                bool deviceCurve;
                 double smoothed;
-                int level = GpwBattery.Feed(cfg, st, r.VoltageMv, r.Charging == true, DateTime.UtcNow, out charging, out anomaly, out smoothed);
+                int level = GpwBattery.Feed(cfg, model, st, r.VoltageMv, r.Charging == true, DateTime.UtcNow,
+                    out charging, out anomaly, out smoothed, out deviceCurve);
+                card.UsesDeviceCurve = deviceCurve;
+                string curveName = deviceCurve ? "设备曲线" : "通用曲线";
 
-                double beforeMax = cfg.ObservedMaxMv;
-                int beforeSamples = cfg.Samples;
-                GpwBattery.Observe(cfg, st, r.VoltageMv, r.Charging == true, DateTime.UtcNow);
-                bool autoAdjusted = GpwBattery.TryAutoAdjust(cfg);
-                if (autoAdjusted) WriteLog(string.Format("GPW 满电锚点自动下调到 {0:0} mV（观测最高 {1:0} mV）", cfg.FullMv, cfg.ObservedMaxMv));
-                // 只在观测值真的变化、样本凑整、或发生自动下调时落盘，避免每次刷新都写 ini。
-                if (cfg.ObservedMaxMv > beforeMax || autoAdjusted || (cfg.Samples > beforeSamples && cfg.Samples % 10 == 0))
-                    _gpwPersistPending = true;
+                // 有设备曲线时锚点/自动校准都失去意义（曲线本身按这颗电池标定过），只保留观测值做诊断。
+                if (!deviceCurve)
+                {
+                    double beforeMax = cfg.ObservedMaxMv;
+                    int beforeSamples = cfg.Samples;
+                    GpwBattery.Observe(cfg, st, r.VoltageMv, r.Charging == true, DateTime.UtcNow);
+                    bool autoAdjusted = GpwBattery.TryAutoAdjust(cfg);
+                    if (autoAdjusted) WriteLog(string.Format("GPW 满电锚点自动下调到 {0:0} mV（观测最高 {1:0} mV）", cfg.FullMv, cfg.ObservedMaxMv));
+                    // 只在观测值真的变化、样本凑整、或发生自动下调时落盘，避免每次刷新都写 ini。
+                    if (cfg.ObservedMaxMv > beforeMax || autoAdjusted || (cfg.Samples > beforeSamples && cfg.Samples % 10 == 0))
+                        _gpwPersistPending = true;
+                }
 
                 card.Charging = charging;
                 if (charging)
                 {
-                    // 充电时不再把主数字换成“充电中”：用户更想知道充到多少了。
-                    // 充电期间不做换算（表面电荷会让读数虚高），所以沿用上一次的估算值。
+                    // 充电时保留主数字并让它继续涨：有设备模型就走 G HUB 的充电模型
+                    // （充电曲线 → 平台区时间表），没有模型仍维持旧行为（显示上次估算值）。
                     bool had = st != null && st.Displayed >= 0;
                     card.HasLevel = had;
                     card.Level = had ? (int?)st.Displayed : null;
                     card.LevelText = had ? st.Displayed + "%" : "—";
                     card.IsError = false;
                     card.StatusText = "充电中";
-                    card.StatusLine = string.Format("HID++ 电压特征 · {0:0} mV · 外部供电，暂停换算", r.VoltageMv);
-                    card.EstimateHint = had ? "充电中 · 显示上次估算值" : "充电中 · 拔线后才有百分比";
+                    card.StatusLine = string.Format("HID++ 电压特征 · {0:0} mV · {1} · 充电模型", r.VoltageMv, curveName);
+                    card.EstimateHint = had
+                        ? (deviceCurve ? "充电中 · 按充电曲线推进" : "充电中 · 显示上次估算值")
+                        : "充电中 · 等待充电读数";
                     card.Accent = had && st.Displayed < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor;
                 }
                 else if (anomaly)
@@ -903,11 +978,11 @@ namespace WirelessBattery
                     card.LevelText = shown + "%";
                     card.IsError = false;
                     card.StatusText = "已连接";
-                    card.StatusLine = string.Format("HID++ 电压特征 · {0:0} mV · 平滑 {1:0} mV", r.VoltageMv, smoothed);
+                    card.StatusLine = string.Format("HID++ 电压特征 · {0:0} mV · 平滑 {1:0} mV · {2}", r.VoltageMv, smoothed, curveName);
                     card.Accent = shown < 30 ? Color.FromArgb(240, 68, 56) : card.ThemeColor;
                     // 卡面上只留“电压”，校准建议只在真的可调时才提示一次；
                     // 观测最高/样本数这类诊断信息留给「电压设置」窗口。
-                    int suggest = GpwBattery.SuggestFullMv(cfg);
+                    int suggest = deviceCurve ? 0 : GpwBattery.SuggestFullMv(cfg);
                     card.EstimateHint = suggest > 0
                         ? string.Format("电压 {0:0} mV · 锚点可调到 {1} mV", r.VoltageMv, suggest)
                         : string.Format("电压 {0:0} mV", r.VoltageMv);
@@ -1734,6 +1809,8 @@ namespace WirelessBattery
         public const int BatteryVoltageFeature = 0x1001;
         /// <summary>Solaar 公开特性表：0x1004 Unified Battery（百分比）。</summary>
         public const int UnifiedBatteryFeature = 0x1004;
+        /// <summary>HID++ 2.0 的 Device Information（0x0003），function 0 返回 modelId（即设备 PID）。</summary>
+        public const int DeviceInfoFeature = 0x0003;
         /// <summary>
         /// 单次探测最多发多少个请求，避免在无电池设备上探测风暴。
         /// 7 个槽位的在场确认 + 长/短两种报文上的特性查询都要算在内。
@@ -2035,11 +2112,53 @@ namespace WirelessBattery
             return index;
         }
 
+        /// <summary>
+        /// 读设备 PID（0x0003 的 function 0）。电池曲线是按 PID 索引的，
+        /// 读不到就回落到通用曲线，所以这里失败不报错，只返回 -1。
+        /// 应答参数从 byte4 起：entityCnt, unitId|transport, modelId(大端), extendedModelId(大端)。
+        /// </summary>
+        public static int ReadModelId(HidGroup g, byte deviceIndex, Action<string> log)
+        {
+            if (g == null) return -1;
+            byte[] rids = new byte[] { 0x11, 0x10 };
+            for (int i = 0; i < rids.Length; i++)
+            {
+                HidInterfaceInfo iface = PickInterface(g, rids[i]);
+                if (iface == null) continue;
+                int id = ReadModelId(iface, rids[i], deviceIndex, log);
+                if (id > 0) return id;
+            }
+            return -1;
+        }
+
+        public static int ReadModelId(HidInterfaceInfo iface, byte rid, byte deviceIndex, Action<string> log)
+        {
+            if (iface == null) return -1;
+            bool answered = false;
+            int index = GetFeatureIndex(iface, rid, deviceIndex, DeviceInfoFeature, ref answered, log);
+            if (index <= 0) return -1;
+            byte[] reply = Call(iface, rid, deviceIndex, (byte)index, 0x00, log);
+            if (reply == null || reply.Length < 8) return -1;
+
+            // 规范位置（v0）：entityCnt, unitId|transport, modelId(大端), extendedModelId, capabilities
+            int primary = (reply[6] << 8) + reply[7];
+            if (LogitechBatteryModel.IsKnownModelPid(primary)) return primary;
+
+            // 新固件（0x0003 v4）在 capabilities 之后追加了无线/有线 Product ID，
+            // 规范位拿到的可能不是设备 PID（例如 GPW 给出 0x9490，真正的 0x4079 在后面）。
+            for (int i = 4; i + 1 < reply.Length; i++)
+            {
+                int v = (reply[i] << 8) + reply[i + 1];
+                if (LogitechBatteryModel.IsKnownModelPid(v)) return v;
+            }
+            // 都不在曲线表里时仍返回规范位，供日志排查；曲线会自然回落到通用曲线。
+            return primary >= 0x1000 ? primary : -1;
+        }
+
         private static byte[] Call(HidInterfaceInfo iface, byte rid, byte deviceIndex, byte featureIndex, byte function, Action<string> log)
         {
             return Call(iface, rid, deviceIndex, featureIndex, function, log, null);
         }
-
         /// <summary>HID++ 2.0 请求里的软件号，1..15 轮换，用来把“哪条请求的应答”对上。</summary>
         private static int _swId;
 

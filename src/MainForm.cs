@@ -356,6 +356,11 @@ namespace WirelessBattery
             sb.Append(string.Format("已连接 {0} 台设备 · {1}", connected, _ctx.TrayStatusText));
             string extra = _ctx.StatusExtraText;
             if (!string.IsNullOrEmpty(extra)) sb.Append(" · ").Append(extra);
+            int iv = _settings.IntervalSeconds;
+            if (iv > 0)
+            {
+                sb.Append(" · 每 ").Append(iv >= 60 ? (iv / 60) + " 分钟" : iv + " 秒").Append("刷新");
+            }
             sb.Append(" · ").Append(time.ToString("HH:mm:ss"));
             _status.Text = sb.ToString();
         }

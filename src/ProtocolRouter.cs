@@ -84,6 +84,8 @@ namespace WirelessBattery
         private readonly object _sync = new object();
         // 下面三个表只存内存：它们是“这次连接里协议怎么寻址”，不是身份，不落盘。
         private readonly Dictionary<string, int> _deviceIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>本次会话读到的设备 PID（只存内存：它决定用哪条电池曲线，重新接入时重读一次即可）。</summary>
+        private readonly Dictionary<string, int> _modelIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, DateTime> _lastProbeUtc = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _probeCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -398,6 +400,23 @@ namespace WirelessBattery
         public void SetCachedDeviceIndex(string modelKey, int deviceIndex)
         {
             lock (_sync) { _deviceIndex[modelKey] = deviceIndex; }
+        }
+
+        /// <summary>本次会话已读到的设备 PID；未读到时返回 -1。</summary>
+        public int GetCachedModelId(string modelKey)
+        {
+            lock (_sync)
+            {
+                int v;
+                if (_modelIds.TryGetValue(modelKey, out v)) return v;
+                return -1;
+            }
+        }
+
+        public void SetCachedModelId(string modelKey, int modelId)
+        {
+            if (string.IsNullOrEmpty(modelKey) || modelId <= 0) return;
+            lock (_sync) { _modelIds[modelKey] = modelId; }
         }
 
         /// <summary>协议名，用于写入 settings.ini 的 Type/Proto 字段。</summary>

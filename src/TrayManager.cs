@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -10,42 +12,268 @@ namespace WirelessBattery
 {
     internal static class IconFactory
     {
+        // 32px 画布坐标系下的字形参数（与样式稿 tools/TrayIconDesign.cs 保持一致）
+        private const float H = 26f;            // 字高
+        private const float W = 13.6f;          // 字宽
+        private const float Spacing = 1.8f;     // 字间距
+        private const float T = 3.2f;           // 笔画粗细
+        private const float Gap = 1.0f;         // 相邻尖角之间的间隙
+
+        // 七段命名：a=上 b=右上 c=右下 d=下 e=左下 f=左上 g=中
+        private static readonly string[] DigitMasks =
+        {
+            "abcdef", "bc", "abdeg", "abcdg", "bcfg", "acdfg", "acdefg", "abc", "abcdefg", "abcdfg"
+        };
+
+        private const string MaskF = "afge";    // 满电 FC：F
+        private const string MaskC = "afed";    // 满电 FC：C
+
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool DestroyIcon(IntPtr hIcon);
 
-        public static Icon Create(int? level, Color color, out IntPtr hIcon)
+        /// <summary>
+        /// 生成托盘图标。level 为 null 时画一条横杠；charging=true 时画两根并排横杠；
+        /// level ≥ 99 时画 FC。图标内含 16/20/24/32 四个尺寸，系统按当前 DPI 取最清晰的一档。
+        /// </summary>
+        public static Icon Create(int? level, Color color, bool charging)
         {
-            Bitmap bmp = new Bitmap(32, 32);
+            int[] sizes = { 16, 20, 24, 32 };
+            List<byte[]> frames = new List<byte[]>(sizes.Length);
+            for (int i = 0; i < sizes.Length; i++)
+            {
+                using (Bitmap bmp = Render(level, color, charging, sizes[i]))
+                    frames.Add(BuildFrame(bmp, sizes[i]));
+            }
+
+            using (MemoryStream ico = new MemoryStream())
+            {
+                BinaryWriter w = new BinaryWriter(ico);
+                w.Write((ushort)0);              // reserved
+                w.Write((ushort)1);              // type = icon
+                w.Write((ushort)sizes.Length);
+                int offset = 6 + 16 * sizes.Length;
+                for (int i = 0; i < sizes.Length; i++)
+                {
+                    w.Write((byte)(sizes[i] >= 256 ? 0 : sizes[i]));
+                    w.Write((byte)(sizes[i] >= 256 ? 0 : sizes[i]));
+                    w.Write((byte)0);            // 调色板数
+                    w.Write((byte)0);            // reserved
+                    w.Write((ushort)1);          // planes
+                    w.Write((ushort)32);         // bpp
+                    w.Write(frames[i].Length);
+                    w.Write(offset);
+                    offset += frames[i].Length;
+                }
+                for (int i = 0; i < frames.Count; i++) w.Write(frames[i]);
+                w.Flush();
+                ico.Position = 0;
+                // 32bpp DIB 帧，Vista 以上与 GDI+ 都能正确解析
+                return new Icon(ico, new Size(32, 32));
+            }
+        }
+
+        /// <summary>把位图编成 ICO 里的 DIB 帧（BITMAPINFOHEADER + 自下而上 BGRA + 全零 AND 掩码）。</summary>
+        private static byte[] BuildFrame(Bitmap bmp, int size)
+        {
+            int maskStride = ((size + 31) / 32) * 4;
+            int xorSize = size * size * 4;
+            int andSize = maskStride * size;
+
+            using (MemoryStream ms = new MemoryStream(40 + xorSize + andSize))
+            using (BinaryWriter w = new BinaryWriter(ms))
+            {
+                w.Write(40);            // biSize
+                w.Write(size);          // biWidth
+                w.Write(size * 2);      // biHeight（XOR + AND）
+                w.Write((short)1);      // biPlanes
+                w.Write((short)32);     // biBitCount
+                w.Write(0);             // biCompression = BI_RGB
+                w.Write(xorSize + andSize);
+                w.Write(0); w.Write(0); w.Write(0); w.Write(0);
+
+                for (int y = size - 1; y >= 0; y--)
+                    for (int x = 0; x < size; x++)
+                    {
+                        Color c = bmp.GetPixel(x, y);
+                        w.Write(c.B); w.Write(c.G); w.Write(c.R); w.Write(c.A);
+                    }
+
+                for (int i = 0; i < andSize; i++) w.Write((byte)0);
+                w.Flush();
+                return ms.ToArray();
+            }
+        }
+
+        private static Bitmap Render(int? level, Color color, bool charging, int size)
+        {
+            Bitmap bmp = new Bitmap(size, size);
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.Clear(Color.Transparent);
-                using (GraphicsPath path = Ui.Round(new Rectangle(2, 2, 28, 28), 8))
-                using (SolidBrush b = new SolidBrush(color))
-                    g.FillPath(b, path);
 
-                string text = level.HasValue ? level.Value.ToString() : "—";
-                float size = text.Length >= 3 ? 9.5f : (text.Length == 2 ? 12.5f : 15f);
-                using (Font f = new Font("Segoe UI", size, FontStyle.Bold, GraphicsUnit.Point))
-                using (SolidBrush b = new SolidBrush(Color.White))
-                using (StringFormat sf = new StringFormat())
+                float scale = size / 32f;
+                using (SolidBrush b = new SolidBrush(color))
                 {
-                    sf.Alignment = StringAlignment.Center;
-                    sf.LineAlignment = StringAlignment.Center;
-                    g.DrawString(text, f, b, new RectangleF(0, 0, 32, 33), sf);
+                    if (charging) DrawDashes(g, b, scale);
+                    else
+                    {
+                        string text;
+                        if (!level.HasValue) text = "dash";
+                        else if (level.Value >= 99) text = "FC";
+                        else text = level.Value.ToString();
+                        DrawText(g, b, text, scale);
+                    }
                 }
             }
+            return bmp;
+        }
 
-            hIcon = bmp.GetHicon();
-            bmp.Dispose();
-            return Icon.FromHandle(hIcon);
+        private static void DrawText(Graphics g, Brush b, string text, float scale)
+        {
+            if (text == "dash")
+            {
+                // 未知电量：只在中间画一条横杠
+                float yMid = (32f - H) * 0.5f + (H - T) * 0.5f;
+                float cx = 16f;
+                HBar(g, b, cx - 5f + Gap * 0.5f, cx + 5f - Gap * 0.5f, yMid + T * 0.5f, T, T * 0.5f);
+                return;
+            }
+
+            int n = text.Length;
+            float totalW = n * W + (n - 1) * Spacing;
+            float x0 = (32f - totalW) * 0.5f;
+            float y0 = (32f - H) * 0.5f;
+
+            GraphicsState st = g.Save();
+            g.ScaleTransform(scale, scale);
+            for (int i = 0; i < n; i++)
+            {
+                string mask = MaskOf(text[i]);
+                if (mask == null) continue;
+                Digit(g, b, x0 + i * (W + Spacing), y0, W, H, T, Gap, mask);
+            }
+            g.Restore(st);
+        }
+
+        private static void DrawDashes(Graphics g, Brush b, float scale)
+        {
+            float totalW = 2 * W + Spacing;
+            float x0 = (32f - totalW) * 0.5f;
+            float y0 = (32f - H) * 0.5f;
+            float yMidCy = y0 + (H - T) * 0.5f + T * 0.5f;
+            float half = T * 0.5f, hg = Gap * 0.5f;
+
+            GraphicsState st = g.Save();
+            g.ScaleTransform(scale, scale);
+            HBar(g, b, x0 + half + hg, x0 + W - half - hg, yMidCy, T, half);
+            HBar(g, b, x0 + W + Spacing + half + hg, x0 + 2 * W + Spacing - half - hg, yMidCy, T, half);
+            g.Restore(st);
+        }
+
+        private static string MaskOf(char c)
+        {
+            if (c >= '0' && c <= '9') return DigitMasks[c - '0'];
+            if (c == 'F') return MaskF;
+            if (c == 'C') return MaskC;
+            return null;
+        }
+
+        /// <summary>
+        /// 一个字：每段两端都收成 90° 尖角，相邻尖角朝同一交点收拢，只留 Gap 的空隙。
+        /// </summary>
+        private static void Digit(Graphics g, Brush b, float x, float y, float w, float h, float t, float gap, string mask)
+        {
+            float half = t * 0.5f;
+            float c = half;
+            float hg = gap * 0.5f;
+            float yMidCy = y + (h - t) * 0.5f + half;
+            float aCy = y + half;
+            float dCy = y + h - half;
+            float lCx = x + half;
+            float rCx = x + w - half;
+
+            if (mask.IndexOf('a') >= 0) HBar(g, b, lCx + hg, rCx - hg, aCy, t, c);
+            if (mask.IndexOf('g') >= 0) HBar(g, b, lCx + hg, rCx - hg, yMidCy, t, c);
+            if (mask.IndexOf('d') >= 0) HBar(g, b, lCx + hg, rCx - hg, dCy, t, c);
+
+            if (mask.IndexOf('f') >= 0) VBar(g, b, lCx, aCy + hg, yMidCy - hg, t, c);
+            if (mask.IndexOf('b') >= 0) VBar(g, b, rCx, aCy + hg, yMidCy - hg, t, c);
+            if (mask.IndexOf('e') >= 0) VBar(g, b, lCx, yMidCy + hg, dCy - hg, t, c);
+            if (mask.IndexOf('c') >= 0) VBar(g, b, rCx, yMidCy + hg, dCy - hg, t, c);
+        }
+
+        private static void HBar(Graphics g, Brush b, float x1, float x2, float cy, float t, float c)
+        {
+            float len = x2 - x1;
+            if (len <= 0.2f || t <= 0.2f) return;
+            c = Math.Min(c, len * 0.49f);
+            float y = cy - t * 0.5f;
+            g.FillPolygon(b, new PointF[]
+            {
+                new PointF(x1 + c, y),
+                new PointF(x2 - c, y),
+                new PointF(x2, cy),
+                new PointF(x2 - c, y + t),
+                new PointF(x1 + c, y + t),
+                new PointF(x1, cy)
+            });
+        }
+
+        private static void VBar(Graphics g, Brush b, float cx, float y1, float y2, float t, float c)
+        {
+            float len = y2 - y1;
+            if (len <= 0.2f || t <= 0.2f) return;
+            c = Math.Min(c, len * 0.49f);
+            float x = cx - t * 0.5f;
+            g.FillPolygon(b, new PointF[]
+            {
+                new PointF(cx, y1),
+                new PointF(x + t, y1 + c),
+                new PointF(x + t, y2 - c),
+                new PointF(cx, y2),
+                new PointF(x, y2 - c),
+                new PointF(x, y1 + c)
+            });
         }
 
         public static void Destroy(IntPtr hIcon)
         {
             if (hIcon == IntPtr.Zero) return;
             try { DestroyIcon(hIcon); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// 托盘图标配色：鼠标绿、耳机蓝、电量低于 30% 红、充电中黄；
+    /// 满电 FC 跟随设备默认色（绿 / 蓝）。
+    /// </summary>
+    internal static class TrayColors
+    {
+        public static readonly Color Mouse = Color.FromArgb(34, 197, 94);
+        public static readonly Color Headset = Color.FromArgb(59, 130, 246);
+        public static readonly Color Low = Color.FromArgb(240, 68, 56);
+        public static readonly Color Charging = Color.FromArgb(250, 204, 21);
+        public static readonly Color Warning = Color.FromArgb(247, 144, 9);
+        public static readonly Color Unknown = Color.FromArgb(152, 162, 179);
+
+        public static bool IsHeadset(DeviceCardModel m)
+        {
+            string s = ((m.Title ?? "") + " " + (m.Subtitle ?? "")).ToLowerInvariant();
+            return s.Contains("耳机") || s.Contains("headset") || s.Contains("headphone") || s.Contains("earphone")
+                || s.Contains("xiberia") || s.Contains("西伯利亚") || s.Contains("k02") || s.Contains("k03")
+                || s.Contains("jieli") || s.Contains("杰理") || s.Contains("hands-free");
+        }
+
+        public static Color For(DeviceCardModel m)
+        {
+            Color device = IsHeadset(m) ? Headset : Mouse;
+            if (m.Charging) return Charging;     // 充电优先：没有百分比时也是黄色
+            if (m.EstimateInvalid) return Warning;
+            if (m.HasLevel && m.Level.HasValue && m.Level.Value < 30) return Low;
+            if (!m.HasLevel) return Unknown;
+            return device;                       // 含满电 FC：跟随设备默认色
         }
     }
 
@@ -74,9 +302,8 @@ namespace WirelessBattery
 
             _icon = new NotifyIcon();
             _icon.Text = "无线设备电量";
-            IntPtr h;
-            _image = IconFactory.Create(null, Color.FromArgb(152, 162, 179), out h);
-            _currentHandle = h;
+            _image = IconFactory.Create(null, Color.FromArgb(152, 162, 179), false);
+            _currentHandle = IntPtr.Zero;
             _icon.Icon = _image;
             _icon.Visible = true;
             _icon.DoubleClick += delegate { _show(); };
@@ -118,29 +345,19 @@ namespace WirelessBattery
                 _lastText = text;
             }
 
-            Color color = Color.FromArgb(152, 162, 179);
-            if (m.HasLevel)
-            {
-                color = m.ThemeColor;
-                if (m.Level.HasValue && m.Level.Value < 30) color = Color.FromArgb(240, 68, 56);
-            }
-            if (m.EstimateInvalid) color = Color.FromArgb(247, 144, 9);
-
+            Color color = TrayColors.For(m);
+            bool charging = m.Charging;
             int? iconLevel = m.HasLevel ? m.Level : (int?)null;
-            string sig = (iconLevel.HasValue ? iconLevel.Value.ToString() : "-") + "|" + color.ToArgb() + "|" + m.Connected;
+
+            string sig = (iconLevel.HasValue ? iconLevel.Value.ToString() : "-")
+                + "|" + color.ToArgb() + "|" + (charging ? 1 : 0) + "|" + m.Connected;
             if (sig != _lastSig)
             {
-                IntPtr h;
-                Icon next = IconFactory.Create(iconLevel, color, out h);
-                IntPtr oldHandle = _currentHandle;
+                Icon next = IconFactory.Create(iconLevel, color, charging);
                 Icon old = _image;
                 _image = next;
-                _currentHandle = h;
                 _icon.Icon = _image;
                 if (old != null) old.Dispose();
-                // 系统在 NIM_MODIFY 时已复制图标，旧句柄换下来即可销毁。
-                // 只在退出时统一销毁会让长跑进程持续累积 GDI 句柄（阶梯推算值每轮都在变）。
-                if (oldHandle != IntPtr.Zero) IconFactory.Destroy(oldHandle);
                 _lastSig = sig;
             }
         }
@@ -261,45 +478,20 @@ namespace WirelessBattery
 
         private void UpdateHost(DeviceCardModel primary, List<DeviceCardModel> cards)
         {
-            int? level = null;
-            Color color = Color.FromArgb(152, 162, 179);
-            string sig = "app";
-            if (primary != null && primary.HasLevel)
+            // 主程序自身的托盘图标固定用软件默认图标，不显示电量数字；
+            // 各设备的电量由各自的 TrayItem 图标承担。
+            if (_hostSig != "app")
             {
-                level = primary.Level;
-                color = primary.ThemeColor;
-                if (primary.Level.HasValue && primary.Level.Value < 30) color = Color.FromArgb(240, 68, 56);
-                if (primary.EstimateInvalid) color = Color.FromArgb(247, 144, 9);
-                sig = "num|" + (level.HasValue ? level.Value.ToString() : "-") + "|" + color.ToArgb();
-            }
-
-            if (sig != _hostSig)
-            {
-                if (level.HasValue)
+                Icon old = _hostImage;
+                _hostImage = null;
+                _host.Icon = AppIcon.Shared;
+                if (old != null) old.Dispose();
+                if (_hostHandle != IntPtr.Zero)
                 {
-                    IntPtr h;
-                    Icon next = IconFactory.Create(level, color, out h);
-                    IntPtr oldHandle = _hostHandle;
-                    Icon old = _hostImage;
-                    _hostImage = next;
-                    _hostHandle = h;
-                    _host.Icon = _hostImage;
-                    if (old != null) old.Dispose();
-                    if (oldHandle != IntPtr.Zero) IconFactory.Destroy(oldHandle);
+                    IconFactory.Destroy(_hostHandle);
+                    _hostHandle = IntPtr.Zero;
                 }
-                else
-                {
-                    Icon old = _hostImage;
-                    _hostImage = null;
-                    _host.Icon = AppIcon.Shared;
-                    if (old != null) old.Dispose();
-                    if (_hostHandle != IntPtr.Zero)
-                    {
-                        IconFactory.Destroy(_hostHandle);
-                        _hostHandle = IntPtr.Zero;
-                    }
-                }
-                _hostSig = sig;
+                _hostSig = "app";
             }
 
             string summary = "";

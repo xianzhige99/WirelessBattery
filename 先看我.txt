@@ -1,0 +1,52 @@
+﻿WirelessBattery v1.4.0.0  离线交接包（20261101 生成）
+
+一、解压到哪
+   解压到固定目录，例如  D:\Projects\WirelessBattery
+   不要放在桌面临时目录，也不要在压缩包里直接双击运行。
+
+二、只想用软件，不想开发
+   直接运行  bin\WirelessBattery.exe
+   首次启动会自动生成 bin\settings.ini，并创建开机自启的任务计划。
+   如果 Windows 提示"已阻止"：右键 exe 属性 → 勾选"解除锁定" → 确定；
+   或先运行根目录的 解除锁定并启动.bat。
+
+三、要继续开发 / 改代码
+   1. 这台电脑不需要装 .NET SDK，Win10/11 自带 .NET Framework 4.x。
+   2. 打开 PowerShell，进到解压后的目录，跑三条：
+          powershell -ExecutionPolicy Bypass -File build.ps1 -Strict
+          powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1
+          powershell -ExecutionPolicy Bypass -File tools\pack.ps1
+      看到 Build OK / ALL PASS 就说明环境没问题。
+   3. 想保留版本历史（提交、回档、看改了啥），需要装 Git for Windows：
+          https://git-scm.com/download/win
+      装完先配一次身份：
+          git config --global user.name  "你的名字"
+          git config --global user.email "你的邮箱"
+      然后在本目录执行  git status  就能看到完整历史。
+      （本包含 .git 目录，历史、分支、v1.3 / v1.4 标签都在。）
+
+四、换机器后第一次运行会看到什么
+   - settings.ini 是便携的：如果从旧机器拷了配置，程序会发现机器指纹不同，
+     清掉"上次电量缓存"，但保留阶梯参数、自定义设备名、勾选状态、GPW 电压校准。
+   - 卡片要等第一轮扫描（最多约 30 秒）才会显示真实状态。
+   - 旧机器插过的设备不会在本机凭空出现一张"未连接"的卡。
+
+五、改完之后怎么带回去
+   - 装了 Git：git commit，然后用 U 盘把 .git 整个拷回旧机器（或推到 GitHub）。
+   - 没装 Git：按文件修改时间只拷改过的文件过去；最好一次只在一台机器上改。
+   - 想彻底干净：把本机 .git 整个目录替换回旧机器，历史即同步。
+
+六、包里有什么
+   src/            源码（C#，约 1 万行）
+   tests/          纯逻辑自检（不碰硬件）
+   tools/          打包、图标、诊断探针、界面截图工具
+   docs/           决策记录、回归清单、发布步骤、交接说明
+   assets/         图标
+   bin/            已编译的 exe 与 build-info.txt（构建产物）
+   build.ps1       编译脚本
+   README.md       用法与原理
+   CHANGELOG.md    版本变更
+   使用说明.txt     面向使用者
+
+   未包含：bin\settings.ini（本机运行态）、bin\tests\（诊断工具产物）、
+           dist\（历史发布包）、.workbuddy\（工具缓存）。

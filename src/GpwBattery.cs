@@ -18,6 +18,8 @@ namespace WirelessBattery
         public bool HasExternalPower;
         public bool SeenExternalPower;
         public DateTime ChargeChangedUtc = DateTime.MinValue;
+        /// <summary>本次充电中电压首次进入平台区（≥ 模型 stable 阈值）的时刻，供充电时间表计时。</summary>
+        public DateTime StableSinceUtc = DateTime.MinValue;
     }
 
     /// <summary>
@@ -74,12 +76,24 @@ namespace WirelessBattery
         }
 
         /// <summary>
-        /// 喂一个采样。返回应当显示的百分比；-1 表示“还没有可显示的值”（首次采样在充电、或滤波尚未产出）。
-        /// charging=true 表示外部供电有效：此时跳过换算，返回上次显示的百分比。
+        /// 喂一个采样。返回应当显示的百分比；-1 表示“还没有可显示的值”（滤波尚未产出）。
+        /// charging=true 表示外部供电有效：此时不按放电曲线换算。
         /// </summary>
         public static int Feed(GpwConfig cfg, GpwFilterState st, double mv, bool externalPower,
             DateTime now, out bool charging, out bool anomaly, out double smoothedMv)
         {
+            bool deviceCurve;
+            return Feed(cfg, null, st, mv, externalPower, now, out charging, out anomaly, out smoothedMv, out deviceCurve);
+        }
+
+        /// <summary>
+        /// 带设备模型的版本：model 非空时用设备曲线（与 G HUB 同源），否则沿用通用锂电曲线。
+        /// 返回 -1 表示暂时没有可显示的值。
+        /// </summary>
+        public static int Feed(GpwConfig cfg, LogitechBatteryModel model, GpwFilterState st, double mv, bool externalPower,
+            DateTime now, out bool charging, out bool anomaly, out double smoothedMv, out bool deviceCurve)
+        {
+            deviceCurve = model != null;
             charging = externalPower;
             anomaly = false;
             smoothedMv = st == null ? mv : st.Ema;
@@ -100,6 +114,7 @@ namespace WirelessBattery
                 st.PendingCount = 0;
                 st.LowMv = -1;
                 st.RiseCount = 0;
+                st.StableSinceUtc = DateTime.MinValue;
             }
 
             // 绝对下限保护：不换算、不滤波，直接 0% + 异常。
@@ -115,8 +130,18 @@ namespace WirelessBattery
                 return 0;
             }
 
-            // 充电中：不映射，保留上次显示（首次采样就充电则没有可显示的百分比）。
-            if (externalPower) return st.Displayed;
+            // 充电中：有设备模型就按 G HUB 的充电模型推进（充电曲线 + 平台区时间表）；
+            // 没有模型时保持旧行为——市电下电压被充电器抬高，直接换算会虚高。
+            if (externalPower)
+            {
+                if (model != null && (model.HasChargeCurve || model.HasSlots))
+                {
+                    int advanced = ChargeStep(model, st, mv, now);
+                    if (advanced > st.Displayed) st.Displayed = advanced;
+                    return st.Displayed;
+                }
+                return st.Displayed;
+            }
 
             // 1) 中值滤波（窗口 1..7）
             st.Window.Add(mv);
@@ -134,7 +159,9 @@ namespace WirelessBattery
             else st.Ema = st.Ema + alpha * (median - st.Ema);
             smoothedMv = st.Ema;
 
-            int candidate = CurvePercent(cfg, st.Ema);
+            int candidate = model != null
+                ? ClampPercent((int)Math.Round(model.PercentFromDischarge(st.Ema)))
+                : CurvePercent(cfg, st.Ema);
 
             if (st.Displayed < 0)
             {
@@ -241,6 +268,57 @@ namespace WirelessBattery
             cfg.LastAutoCycle = cfg.CycleCount;
             cfg.LastAutoAdjustUtc = DateTime.UtcNow;
             return true;
+        }
+
+        /// <summary>
+        /// 充电态推进：平台区（≥ stable 阈值）以下用充电曲线，进入平台区后改用充电时间表按分钟推进。
+        /// 平台区电压几乎不变，靠电压已经无法分辨电量，这也是 G HUB 改用时间表的原因。
+        /// </summary>
+        private static int ChargeStep(LogitechBatteryModel model, GpwFilterState st, double mv, DateTime now)
+        {
+            double pct;
+
+            // stable 阈值缺省（0）表示原始表没有该字段：充电开始即可按时间表计时。
+            bool plateau = model.HasSlots && (model.StableMv <= 0 || mv >= model.StableMv);
+            if (plateau)
+            {
+                // 平台区（GPW 是 4.1V 以上）电压几乎不动，而充电曲线在 4.2V 就直接给 100%，
+                // 所以这一段必须只信时间表。G HUB 的做法一致：高于阈值就走时间表。
+                if (st.StableSinceUtc == DateTime.MinValue) st.StableSinceUtc = now;
+                double minutes = (now - st.StableSinceUtc).TotalMinutes;
+                if (minutes < 0) minutes = 0;
+                // 从来没见过放电读数（例如插着电启动）：平台区电压没有信息量，
+                // 时间表又必须从一个已知起点累加，此时宁可不给数字，也不要用 0 起步编一个出来。
+                if (st.Displayed < 0) return -1;
+
+                double byTime = model.PercentFromSlots(minutes);
+                if (model.GapFill > 0)
+                {
+                    // 时间表第一档往往比当前读数高一截（GPW 是 66%），
+                    // 按 gap_fill_speed 每 30 秒补一格，避免插电瞬间跳二十个点。
+                    double basePct = st.Displayed;
+                    double allowed = basePct + model.GapFill * (minutes / 0.5);
+                    pct = Math.Min(byTime, allowed);
+                }
+                else
+                {
+                    pct = byTime;
+                }
+            }
+            else
+            {
+                st.StableSinceUtc = DateTime.MinValue;
+                pct = model.HasChargeCurve ? model.PercentFromCharge(mv) : 0;
+            }
+
+            return ClampPercent((int)Math.Round(pct));
+        }
+
+        private static int ClampPercent(int v)
+        {
+            if (v < 0) return 0;
+            if (v > 100) return 100;
+            return v;
         }
 
         private static double Median(List<double> values)

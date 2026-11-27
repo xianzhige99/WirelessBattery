@@ -23,6 +23,9 @@ namespace WirelessBattery
         private TextBox _hysteresis;
         private TextBox _rise;
         private CheckBox _autoAdjust;
+        // 设备曲线模式下用三档预设替代 4 个原始滤波参数。
+        private ComboBox _preset;
+        private bool _deviceCurve;
         private Label _observed;
         private RoundButton _adopt;
         private Label _status;
@@ -30,10 +33,20 @@ namespace WirelessBattery
         private readonly double _originalFullMv;
         private readonly double _originalEmptyMv;
 
-        public GpwSettingsForm(AppSettings settings, string key, string title, Action onSaved)
+        /// <summary>三档预设对应的 {中值窗口, EMA α, 滞回死区, 回升容差}。</summary>
+        private static readonly double[][] PresetValues = new double[][]
+        {
+            new double[] { 5, 0.15, 3, 80 },
+            new double[] { 3, 0.25, 2, 50 },
+            new double[] { 1, 0.5, 1, 30 }
+        };
+        private static readonly string[] PresetNames = new string[] { "稳定", "标准", "灵敏" };
+
+        public GpwSettingsForm(AppSettings settings, string key, string title, Action onSaved, bool deviceCurve)
         {
             _settings = settings;
             _onSaved = onSaved;
+            _deviceCurve = deviceCurve;
 
             GpwConfig cfg = settings.GetGpwConfig();
             _originalFullMv = cfg.FullMv;
@@ -173,7 +186,67 @@ namespace WirelessBattery
             };
             Controls.Add(bottom);
 
+            if (deviceCurve)
+            {
+                // 锚点 / 中段偏移 / 自动校准 / 观测建议：只服务通用曲线，设备曲线下不参与换算，整行收起。
+                HideRow(table, 1);
+                HideRow(table, 2);
+                HideRow(table, 3);
+                HideRow(table, 8);
+                HideRow(table, 9);
+
+                // 第 4 行：中值窗口 → 显示灵敏度下拉
+                Label presetLabel = table.GetControlFromPosition(0, 4) as Label;
+                if (presetLabel != null) presetLabel.Text = "显示灵敏度";
+                Control windowHost = table.GetControlFromPosition(1, 4);
+                if (windowHost != null) windowHost.Visible = false;
+
+                _preset = new ComboBox();
+                _preset.DropDownStyle = ComboBoxStyle.DropDownList;
+                _preset.Font = Ui.Font(9f, FontStyle.Regular);
+                _preset.Dock = DockStyle.Fill;
+                _preset.Margin = new Padding(0, 5, 0, 5);
+                for (int i = 0; i < PresetNames.Length; i++) _preset.Items.Add(PresetNames[i]);
+                _preset.SelectedIndex = MatchPreset(cfg);
+                table.Controls.Add(_preset, 1, 4);
+
+                // 第 5 行：EMA 原始输入收起，改成参数说明
+                Control alphaLabel = table.GetControlFromPosition(0, 5);
+                if (alphaLabel != null) alphaLabel.Visible = false;
+                Control alphaHost = table.GetControlFromPosition(1, 5);
+                if (alphaHost != null) alphaHost.Visible = false;
+                HideRow(table, 6);
+                HideRow(table, 7);
+
+                table.RowStyles[5] = new RowStyle(SizeType.Absolute, 42f);
+                Label explain = new Label();
+                explain.Text = "显示灵敏度决定数字更新的快慢与稳定程度：数字老跳选「稳定」，"
+                    + "觉得掉电后更新太慢选「灵敏」，拿不准用「标准」。";
+                explain.Dock = DockStyle.Fill;
+                explain.Font = Ui.Font(8.4f, FontStyle.Regular);
+                explain.ForeColor = Ui.Muted;
+                explain.TextAlign = ContentAlignment.TopLeft;
+                table.Controls.Add(explain, 0, 5);
+                table.SetColumnSpan(explain, 2);
+
+                header.Text = "该型号使用设备曲线（与 G HUB 同源），电量早按曲线算好，这里只调数字怎么显示。";
+                ClientSize = new Size(560, 218);
+                Text = string.IsNullOrEmpty(title) ? "GPW 显示设置" : "GPW 显示设置 · " + title;
+            }
+
             RefreshObserved();
+        }
+
+        /// <summary>把整行（含跨列的控件）收起来，并把它占的高度归零。</summary>
+        private static void HideRow(TableLayoutPanel table, int row)
+        {
+            for (int c = 0; c < table.ColumnCount; c++)
+            {
+                Control ctl = table.GetControlFromPosition(c, row);
+                if (ctl != null) ctl.Visible = false;
+            }
+            if (row >= 0 && row < table.RowStyles.Count)
+                table.RowStyles[row] = new RowStyle(SizeType.Absolute, 0f);
         }
 
         private TextBox AddRow(TableLayoutPanel table, int row, string label, string value, string note)
@@ -222,10 +295,27 @@ namespace WirelessBattery
                     suggest > 0 ? "\n建议把满电锚点调整为 " + suggest.ToString(CultureInfo.InvariantCulture) + " mV" : "");
             }
             _adopt.Visible = suggest > 0;
-            _status.Text = cfg.AutoAdjust
-                ? "自动调整已开启：只下调、每次 50 mV、下限 4000 mV；手动改过锚点后停止。"
-                : "自动调整已关闭：满电锚点只在点击“保存”或“采用建议值”时改变。";
+            _status.Text = _deviceCurve
+                ? "已按设备曲线换算：锚点与自动调整不参与运算，改完灵敏度点「保存」即生效。"
+                : (cfg.AutoAdjust
+                    ? "自动调整已开启：只下调、每次 50 mV、下限 4000 mV；手动改过锚点后停止。"
+                    : "自动调整已关闭：满电锚点只在点击“保存”或“采用建议值”时改变。");
             _status.ForeColor = Ui.Muted;
+        }
+
+        /// <summary>当前配置落在哪一档；都不匹配就返回「自定义」，避免静默改写用户已有的调参。</summary>
+        private static int MatchPreset(GpwConfig cfg)
+        {
+            for (int i = 0; i < PresetValues.Length; i++)
+            {
+                double[] v = PresetValues[i];
+                if (Math.Abs(cfg.MedianWindow - v[0]) < 0.001
+                    && Math.Abs(cfg.Alpha - v[1]) < 0.001
+                    && Math.Abs(cfg.Hysteresis - v[2]) < 0.001
+                    && Math.Abs(cfg.RiseTolerance - v[3]) < 0.001)
+                    return i;
+            }
+            return 1;   // 都不匹配（多半是 1.4.0 留下的手调值）时按「标准」显示，保存前不会改写配置
         }
 
         private double? ReadNumber(TextBox box)
@@ -243,6 +333,28 @@ namespace WirelessBattery
         {
             error = "";
             GpwConfig cfg = _settings.GetGpwConfig().Clone();
+
+            if (_deviceCurve)
+            {
+                // 锚点类参数不参与设备曲线换算，保持原值不动；只把「显示灵敏度」档位写回 4 个滤波参数。
+                int idx = _preset == null ? 1 : _preset.SelectedIndex;
+                if (idx >= 0 && idx < PresetValues.Length)
+                {
+                    double[] v = PresetValues[idx];
+                    cfg.MedianWindow = (int)Math.Round(v[0]);
+                    cfg.Alpha = v[1];
+                    cfg.Hysteresis = v[2];
+                    cfg.RiseTolerance = v[3];
+                }
+                string why;
+                if (!AppSettings.IsValidGpw(cfg, out why))
+                {
+                    error = why + "。";
+                    return null;
+                }
+                return cfg;
+            }
+
             double? full = ReadNumber(_fullMv);
             double? empty = ReadNumber(_emptyMv);
             double? mid = ReadNumber(_midOffset);
@@ -285,6 +397,7 @@ namespace WirelessBattery
             _hysteresis.Text = d.Hysteresis.ToString("0.###", CultureInfo.InvariantCulture);
             _rise.Text = d.RiseTolerance.ToString("0.###", CultureInfo.InvariantCulture);
             _autoAdjust.Checked = d.AutoAdjust;
+            if (_deviceCurve && _preset != null) _preset.SelectedIndex = 1;
         }
 
         private void AdoptSuggestion()

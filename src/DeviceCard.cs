@@ -178,6 +178,9 @@ namespace WirelessBattery
                 accent = Color.FromArgb(240, 68, 56);
             if (!m.HasLevel)
                 accent = Color.FromArgb(152, 162, 179);
+            // 充电优先于「低电红」和「无电量灰」：只要在充电就应当是黄色，
+            // 刚插线还没算出百分比时也不例外。
+            if (m.Charging) accent = Color.FromArgb(250, 204, 21);
 
             _dot.BackColor = m.Connected ? accent : Color.FromArgb(152, 162, 179);
             _level.ForeColor = accent;
@@ -197,6 +200,8 @@ namespace WirelessBattery
 
             _estimateSetup.Visible = m.CanEstimate;
             _gpwSetup.Visible = m.CanGpwSetup;
+            // 命中设备曲线后，这个入口只剩显示平滑可调，叫「电压设置」会误导。
+            _gpwSetup.Text = m.UsesDeviceCurve ? "显示设置" : "电压设置";
             _rename.Visible = true;
 
             // 卡片子控件是独立窗口；父卡片重绘时不一定带上它们。

@@ -337,6 +337,23 @@ namespace WirelessBattery
             if (_form != null && !_form.IsDisposed) _form.UpdateCards(result);
             if (result.PendingDisconnect) ScheduleRecheck();
             if (result.RecheckAfterMs > 0) ScheduleModeRecheck(result.RecheckAfterMs);
+            SyncTimerInterval(result);
+        }
+
+        /// <summary>
+        /// 把定时器对齐到用户设定的刷新间隔。
+        /// 曾经在充电时强制缩到 30 秒（为了贴近 G HUB 的时间表步进），但那样会无视用户
+        /// 选的 5/10 分钟——充电模型本身按经过分钟数插值，采样间隔多长都不会算错，只是更新粗一些。
+        /// 所以这里只认设置值。
+        /// </summary>
+        private void SyncTimerInterval(ScanResult result)
+        {
+            if (_timer == null) return;
+            int configured = Settings.IntervalSeconds;
+            if (configured <= 0) return;
+            if (configured < 30) configured = 30;
+            int wantMs = configured * 1000;
+            if (_timer.Interval != wantMs) _timer.Interval = wantMs;
         }
 
         private void ScheduleModeRecheck(int ms)
@@ -500,7 +517,20 @@ namespace WirelessBattery
 
         public void ShowGpwSettings(string key, string title)
         {
-            using (GpwSettingsForm f = new GpwSettingsForm(Settings, key, title, ApplySettings))
+            bool deviceCurve = false;
+            if (_lastResult != null && _lastResult.Cards != null)
+            {
+                for (int i = 0; i < _lastResult.Cards.Count; i++)
+                {
+                    DeviceCardModel c = _lastResult.Cards[i];
+                    if (c != null && string.Equals(c.DeviceKey, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        deviceCurve = c.UsesDeviceCurve;
+                        break;
+                    }
+                }
+            }
+            using (GpwSettingsForm f = new GpwSettingsForm(Settings, key, title, ApplySettings, deviceCurve))
             {
                 if (_form != null && _form.Visible) f.ShowDialog(_form);
                 else f.ShowDialog();

@@ -30,6 +30,8 @@ namespace WirelessBattery
             TestWeights();
             TestGpwCurve();
             TestGpwFeed();
+            TestDeviceBatteryModel();
+            TestGpwFeedWithModel();
             TestConfigRoundTrip();
             TestSafeDeviceId();
             TestEstimateBt();
@@ -226,6 +228,89 @@ namespace WirelessBattery
                 if (pct < 0) { dropped = false; break; }
             }
             Check(dropped, "连续放电 40 轮读数始终有效", "出现 -1");
+        }
+
+        // ---------------- 设备级电池模型（G HUB 同源曲线） ----------------
+
+        private static void TestDeviceBatteryModel()
+        {
+            Console.WriteLine("[设备电池模型]");
+
+            LogitechBatteryModel gpw = LogitechBatteryModel.For(0x4079);
+            Check(gpw != null, "PRO WIRELESS(0x4079) 命中设备曲线", "model=null");
+            if (gpw == null) return;
+
+            // 参考值取自 G HUB 网页版同一份 battery.xml 的能量曲线（4.186V 满 / 3.479V 空）。
+            Near(gpw.PercentFromDischarge(4186), 100.0, 0.6, "4186mV ≈ 100%");
+            Near(gpw.PercentFromDischarge(4100), 93.6, 0.8, "4100mV ≈ 93.6%");
+            Near(gpw.PercentFromDischarge(4000), 81.4, 0.8, "4000mV ≈ 81.4%");
+            Near(gpw.PercentFromDischarge(3800), 47.0, 0.8, "3800mV ≈ 47%");
+            Near(gpw.PercentFromDischarge(3700), 15.7, 0.8, "3700mV ≈ 15.7%");
+            Near(gpw.PercentFromDischarge(3600), 2.9, 0.8, "3600mV ≈ 2.9%");
+            Near(gpw.PercentFromDischarge(3480), 0.0, 0.6, "3480mV = 0%");
+
+            // 与通用曲线的差异：低压区旧实现会高报近 20 个点，这正是本次要修的问题。
+            GpwConfig cfg = new GpwConfig();
+            int generic = GpwBattery.CurvePercent(cfg, 3700);
+            int device = (int)Math.Round(gpw.PercentFromDischarge(3700));
+            Check(generic - device >= 15,
+                "低压区通用曲线比设备曲线高报 15 点以上（旧实现的偏差）",
+                "generic=" + generic + " device=" + device);
+
+            // 单调性：电压升高电量不能下降
+            bool monotonic = true;
+            double prev = -1;
+            for (int mv = 3480; mv <= 4186; mv += 5)
+            {
+                double p = gpw.PercentFromDischarge(mv);
+                if (p < prev - 0.001) { monotonic = false; break; }
+                prev = p;
+            }
+            Check(monotonic, "设备曲线单调不降", "出现回落");
+
+            Check(LogitechBatteryModel.For(0x1234) == null, "未收录的 PID 回落到通用曲线", "意外命中");
+            Check(LogitechBatteryModel.For(-1) == null, "PID=-1 不查表", "意外命中");
+
+            Check(gpw.HasChargeCurve, "带充电曲线", "缺充电曲线");
+            Near(gpw.PercentFromCharge(3929), 10.0, 1.0, "充电曲线 3929mV ≈ 10%");
+            Check(gpw.HasSlots, "带充电时间表", "缺时间表");
+            Near(gpw.PercentFromSlots(30), 85.0, 1.5, "充电时间表 30 分钟 ≈ 85%");
+            Near(gpw.StableMv, 4100, 0.5, "平台区阈值 4100mV");
+        }
+
+        private static void TestGpwFeedWithModel()
+        {
+            Console.WriteLine("[设备模型 + 滤波]");
+            LogitechBatteryModel gpw = LogitechBatteryModel.For(0x4079);
+            if (gpw == null) { Check(false, "设备模型可用", "model=null"); return; }
+            GpwConfig cfg = new GpwConfig();
+            DateTime t0 = new DateTime(2026, 11, 1, 8, 0, 0, DateTimeKind.Utc);
+            bool charging, anomaly, deviceCurve;
+            double smoothed;
+
+            // 放电：走设备曲线，同电压下与通用曲线不同
+            GpwFilterState st = new GpwFilterState();
+            int lv = GpwBattery.Feed(cfg, gpw, st, 3700, false, t0, out charging, out anomaly, out smoothed, out deviceCurve);
+            Check(deviceCurve, "放电时使用设备曲线", "deviceCurve=false");
+            Equal(lv, 16, "3700mV 显示 16%（设备曲线）");
+
+            // 充电：先有一个放电读数，再插线；进入平台区后按时间表推进
+            GpwFilterState ch = new GpwFilterState();
+            int start = GpwBattery.Feed(cfg, gpw, ch, 3800, false, t0, out charging, out anomaly, out smoothed, out deviceCurve);
+            Equal(start, 47, "3800mV 放电显示 47%（设备曲线）");
+
+            int a = GpwBattery.Feed(cfg, gpw, ch, 3900, true, t0.AddMinutes(1), out charging, out anomaly, out smoothed, out deviceCurve);
+            Check(charging && deviceCurve, "充电态标记正确", "charging=" + charging);
+            Check(Math.Abs(a - start) <= 2, "刚插线数字不跳变", "start=" + start + " a=" + a);
+
+            int b = GpwBattery.Feed(cfg, gpw, ch, 4100, true, t0.AddMinutes(2), out charging, out anomaly, out smoothed, out deviceCurve);
+            int c = GpwBattery.Feed(cfg, gpw, ch, 4200, true, t0.AddMinutes(32), out charging, out anomaly, out smoothed, out deviceCurve);
+            Check(c >= 80, "平台区充 30 分钟后推进到 80% 以上（时间表）", "level=" + c);
+            Check(c >= b, "充电过程中数字不回退", "b=" + b + " c=" + c);
+
+            // 拔线：回到放电曲线口径（85% 起步，允许滞回，不该掉到 80 以下）
+            int d = GpwBattery.Feed(cfg, gpw, ch, 4000, false, t0.AddMinutes(33), out charging, out anomaly, out smoothed, out deviceCurve);
+            Check(!charging && d >= 80, "拔线后回到放电曲线口径", "charging=" + charging + " d=" + d);
         }
 
         // ---------------- 配置读写 ----------------

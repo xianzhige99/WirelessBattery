@@ -1,4 +1,4 @@
-# 设备电量（Wireless Battery）v1.4
+# 设备电量（Wireless Battery）v1.4.4
 
 Windows 本地外设电量工具。支持 2.4G / 蓝牙双模，蓝牙阶梯电量带「上报值校验 + 时间推算」。
 实测设备：MCHOSE A7 V2 Pro+、西伯利亚 K02BS、罗技 G PRO Wireless（经接收器）。
@@ -250,7 +250,7 @@ UIPI 会阻止 Medium 程序注册 `Shell_NotifyIcon`。任选一种处理：
 ## 文件
 
 ```
-src/                 源码（24 个 .cs）
+src/                 源码（26 个 .cs）
 tests/               纯逻辑自检，不碰硬件
 tools/               打包、图标、诊断探针、界面截图等开发工具
 assets/app.ico       图标（多尺寸）
@@ -264,6 +264,7 @@ docs/                截图、决策记录、回归清单、验收口径、发�
 以管理员身份运行.bat  结束旧实例并以管理员权限重启（修复托盘）
 
 bin/                 构建产物：WirelessBattery.exe 与中文名副本
+output/              构建输出副本（含探针 exe，不入库）
 settings.ini         首次运行后生成（便携设置/计时，不入库）
 ```
 
@@ -271,7 +272,7 @@ settings.ini         首次运行后生成（便携设置/计时，不入库）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1                        # 编译到 bin/
-powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.4.1 -Clean  # 升版本并重编
+powershell -ExecutionPolicy Bypass -File build.ps1 -Version 1.4.4 -Clean  # 升版本并重编
 powershell -ExecutionPolicy Bypass -File tests/run-tests.ps1              # 纯逻辑自检，应为 ALL PASS
 ```
 
@@ -281,7 +282,7 @@ powershell -ExecutionPolicy Bypass -File tests/run-tests.ps1              # 纯�
 打一个可直接上传到 Release 的 zip：
 
 ```
-tools/pack.ps1        → dist/WirelessBattery-1.4.0.0-win64.zip
+tools/pack.ps1        → dist/WirelessBattery-1.4.4.0-win64.zip
 ```
 
 ## 隐私
